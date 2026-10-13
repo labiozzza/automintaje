@@ -1330,7 +1330,32 @@ _MONTAGE_SIGNATURE_KEYS = (
     "subtitle_scale", "subtitle_box", "subtitle_font",
     "blur_banned_words", "edge_mode", "overlays", "animation",
     "zoom_timeline_override",
+    "camera_mode", "follow_strength", "lag_seconds", "min_zoom",
+    "camera_wobble",
 )
+
+
+def _validate_camera_mode(raw: Any, legacy_face_tracking: bool = False) -> str:
+    mode = str(raw or "").strip().lower()
+    if mode in {"off", "hold", "live"}:
+        return mode
+    # Old jobs only carry face_tracking=true: that means eye hold.
+    if mode == "" and legacy_face_tracking:
+        return "hold"
+    if mode not in ("", "off"):
+        raise HTTPException(400, f"camera_mode должен быть off, hold или live: {raw!r}")
+    return "off"
+
+
+def _validate_float_range(raw: Any, low: float, high: float,
+                          default: float, name: str) -> float:
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{name} должен быть числом")
+    if not (low <= value <= high):
+        raise HTTPException(400, f"{name} должен быть от {low} до {high}")
+    return value
 
 
 def _montage_signature(params: dict) -> str:
@@ -1425,6 +1450,7 @@ async def _render_mirrored_variant(
         options=alternate_options,
         progress_cb=alt_progress,
         report_cb=report_cb,
+        cancel_cb=_montage_cancel_cb(job_id),
         log_cb=lambda message: asyncio.run_coroutine_threadsafe(
             _montage_announce(job_id, f"Отражённая версия: {message}"), loop
         ),
@@ -1484,6 +1510,14 @@ async def process_mirror_variant(job_id: str) -> None:
     try:
         path, options = await _render_mirrored_variant(job_id, report_cb=report, progress_cb=progress)
     except BaseException as exc:
+        if _cancel_requested(job_id):
+            state = dict(job.get("mirror_variant") or {})
+            state.update(status="cancelled", error="Отменено пользователем",
+                         detail="Отменено пользователем")
+            job["mirror_variant"] = state
+            _save_montage_job(job_id)
+            await _montage_announce(job_id, "Отражённая версия: отменено пользователем")
+            return
         state = dict(job.get("mirror_variant") or {})
         state.update(status="error", error=str(exc), detail=str(exc))
         state["operation"] = failed_snapshot(state.get("operation"), str(exc))
@@ -1642,7 +1676,7 @@ def _prepared_cover_entry(job: dict, purpose: str, cover_path) -> Optional[dict]
 
 
 def _render_prepared_video(purpose: str, source, target_dir, stem: str,
-                           mirrored: bool, progress) -> Path:
+                           mirrored: bool, progress, cancel_cb=None) -> Path:
     """Produce the platform-ready video (local transform; run off the event loop)."""
     source = Path(source)
     target_dir = Path(target_dir)
@@ -1661,7 +1695,8 @@ def _render_prepared_video(purpose: str, source, target_dir, stem: str,
         except Exception:
             duration = 30.0
         output = target_dir / f"{stem}_tg.mp4"
-        montage_engine._transcode_to_fit(source, output, 45 * 1024 * 1024, duration, progress)
+        montage_engine._transcode_to_fit(source, output, 45 * 1024 * 1024, duration, progress,
+                                         cancel_cb=cancel_cb)
         return output
     from montage.instagram_publisher import InstagramPublisher
     publisher = InstagramPublisher(
@@ -1838,6 +1873,8 @@ async def process_prepare_publish(job_id: str, targets: list, cover_path: Option
 
     try:
         for item in needs:
+            if _cancel_requested(job_id):
+                raise montage_engine.MontageCancelled("Отменено пользователем")
             key = item["key"]
             tracker.start(key, "Подготовка")
             if item["kind"] == "video":
@@ -1857,6 +1894,7 @@ async def process_prepare_publish(job_id: str, targets: list, cover_path: Option
                 path = await asyncio.to_thread(
                     _render_prepared_video, item["purpose"], source, prep_dir, stem,
                     item["mirrored"], video_progress,
+                    cancel_cb=_montage_cancel_cb(job_id),
                 )
                 info = _validate_prepared_video(path)
                 _publish_prep_entries(job)[key] = {
@@ -1897,6 +1935,13 @@ async def process_prepare_publish(job_id: str, targets: list, cover_path: Option
         _save_montage_job(job_id)
         await _montage_announce(job_id, "Файлы для публикации готовы")
     except BaseException as exc:
+        if _cancel_requested(job_id):
+            job["prepare_operation"] = failed_snapshot(tracker.snapshot(), "Отменено пользователем")
+            job["prepare_status"] = "cancelled"
+            job["prepare_error"] = "Отменено пользователем"
+            _save_montage_job(job_id)
+            await _montage_announce(job_id, "Подготовка к публикации отменена пользователем")
+            raise montage_engine.MontageCancelled("Отменено пользователем")
         job["prepare_operation"] = failed_snapshot(tracker.snapshot(), str(exc))
         job["prepare_status"] = "error"
         job["prepare_error"] = str(exc)
@@ -1970,6 +2015,59 @@ def _recover_publish_outcomes(job: dict) -> None:
 
 
 _MONTAGE_RENDER_PROGRESS_CAP = 90.0
+
+
+# --------------------------------------------------------------------------
+# Cancellation of montage jobs ("передумал" support).
+#
+# Every background coroutine of a montage job is registered here so the cancel
+# endpoint can stop it.  Cancelling the asyncio task alone is not enough: the
+# render/publish work runs in worker threads blocked in ``Popen.wait()``, so
+# the endpoint also sets ``job["cancel_requested"]`` (read by engine
+# ``cancel_cb`` hooks) and kills tracked subprocesses via
+# ``montage_engine.cancel_job_procs``.  Worker code that observes the flag
+# raises ``montage_engine.MontageCancelled`` and the handlers below translate
+# it into a ``cancelled`` state instead of ``error``.
+# --------------------------------------------------------------------------
+
+MONTAGE_TASKS: dict[str, set] = {}
+
+
+def _track_montage_task(job_id: str, coro) -> "asyncio.Task":
+    task = asyncio.create_task(coro)
+    tasks = MONTAGE_TASKS.setdefault(job_id, set())
+    tasks.add(task)
+
+    def _forget(done_task: "asyncio.Task") -> None:
+        tasks.discard(done_task)
+        if not tasks:
+            MONTAGE_TASKS.pop(job_id, None)
+
+    task.add_done_callback(_forget)
+    return task
+
+
+def _cancel_requested(job_id: str) -> bool:
+    job = jobs.get(job_id)
+    return bool(job is not None and job.get("cancel_requested"))
+
+
+def _montage_cancel_cb(job_id: str):
+    """Callback given to engine worker calls; True once the user cancelled."""
+    return lambda: _cancel_requested(job_id)
+
+
+def _mark_montage_cancelled(job_id: str, detail: str = "Отменено пользователем") -> None:
+    job = jobs.get(job_id)
+    if job is None:
+        return
+    job["status"] = "cancelled"
+    job["phase"] = "cancelled"
+    job["stage"] = "cancelled"
+    job["detail"] = detail
+    job["error"] = detail
+    mark_operation_failed(job_id, detail)
+    _save_montage_job(job_id)
 
 
 def _finalize_montage_state(job: dict) -> list:
@@ -2283,7 +2381,8 @@ async def process_montage(job_id: str, params: dict):
             job["audio_censor_srt"] = censor_srt_text
             _save_montage_job(job_id)
 
-        if params.get("face_tracking", True) and not status["face_model"]:
+        needs_face_model = montage_engine.resolve_camera_options(params)["do_track"]
+        if needs_face_model and not status["face_model"]:
             await broadcast_progress(job_id, 3, "model", "Загрузка модели face_landmarker.task...")
             download_face_model(job_id, progress)
             status = montage_engine.montage_status()
@@ -2304,6 +2403,7 @@ async def process_montage(job_id: str, params: dict):
             options=render_params,
             progress_cb=progress,
             report_cb=report,
+            cancel_cb=_montage_cancel_cb(job_id),
             log_cb=lambda message: asyncio.run_coroutine_threadsafe(
                 _montage_announce(job_id, message), loop
             ),
@@ -2328,6 +2428,11 @@ async def process_montage(job_id: str, params: dict):
         await broadcast_progress(job_id, _MONTAGE_RENDER_PROGRESS_CAP, "main_ready", "Основной ролик готов")
         await _montage_announce(job_id, f"Основной ролик готов: {Path(meta['result_video']).name} ({(os.path.getsize(meta['result_video']) >> 20)} МБ)")
     except Exception as e:
+        if _cancel_requested(job_id):
+            _mark_montage_cancelled(job_id)
+            print(f"[montage] job {job_id} cancelled by user", file=sys.stderr)
+            await broadcast_progress(job_id, job.get("progress", 0), "cancelled", "Отменено пользователем")
+            return
         job["status"] = "error"
         job["phase"] = "failed"
         job["error"] = str(e)
@@ -2385,6 +2490,12 @@ async def process_cover_suggestions(job_id: str) -> None:
         await _store_project_covers(job_id)
         _save_montage_job(job_id)
     except Exception as exc:
+        if _cancel_requested(job_id):
+            job["cover_status"] = "cancelled"
+            job["cover_error"] = "Отменено пользователем"
+            job["cover_detail"] = "Отменено пользователем"
+            _save_montage_job(job_id)
+            return
         job["cover_status"] = "error"
         job["cover_error"] = str(exc)
         job["cover_detail"] = str(exc)
@@ -2418,10 +2529,39 @@ async def process_custom_cover(job_id: str, timestamp: float, title: str) -> Non
         await _store_project_covers(job_id)
         _save_montage_job(job_id)
     except Exception as exc:
+        if _cancel_requested(job_id):
+            job["cover_status"] = "cancelled"
+            job["cover_error"] = "Отменено пользователем"
+            job["cover_detail"] = "Отменено пользователем"
+            _save_montage_job(job_id)
+            return
         job["cover_status"] = "error"
         job["cover_error"] = str(exc)
         job["cover_detail"] = str(exc)
         _save_montage_job(job_id)
+
+
+def _mark_publish_cancelled(job_id: str, targets: list) -> None:
+    """Mark an interrupted publication as cancelled, keeping finished work."""
+    job = jobs.get(job_id)
+    if job is None:
+        return
+    for target in targets or []:
+        target_id = str(target.get("id") or target.get("kind") or "")
+        if not target_id:
+            continue
+        item = (job.get("publish_progress") or {}).get(target_id)
+        if item is not None and item.get("status") in {"queued", "preparing", "publishing"}:
+            item.update(status="cancelled", progress=item.get("progress"),
+                        detail="Отменено пользователем")
+        if (job.get("publish_status") or {}).get(target_id) in {None, "queued", "preparing", "publishing"}:
+            job["publish_status"][target_id] = "failed"
+            job["publish_errors"][target_id] = "Отменено пользователем"
+    job["status"] = "done"
+    job["stage"] = "cancelled"
+    job["detail"] = "Публикация отменена пользователем"
+    job["error"] = None
+    _save_montage_job(job_id)
 
 
 async def process_publish(job_id: str, targets: list, publish_lock: Optional[asyncio.Lock] = None):
@@ -2571,6 +2711,7 @@ async def process_publish(job_id: str, targets: list, publish_lock: Optional[asy
             transcript_text=str(job.get("srt_text") or ""),
             targets=targets,
             prepared_targets=prepared_targets,
+            cancel_cb=_montage_cancel_cb(job_id),
             progress_cb=publish_progress,
             target_progress_cb=target_progress,
             confirmed_cb=confirmed_publish,
@@ -2634,6 +2775,12 @@ async def process_publish(job_id: str, targets: list, publish_lock: Optional[asy
         if not current_errors and not current_unknown:
             _run_cleanup_safely(_cleanup_publish_artifacts, job_id, job)
         await broadcast_progress(job_id, 100, "published", detail)
+    except (asyncio.CancelledError, montage_engine.MontageCancelled):
+        if _cancel_requested(job_id):
+            _mark_publish_cancelled(job_id, targets)
+            await broadcast_progress(job_id, job.get("progress", 0), "cancelled", "Публикация отменена пользователем")
+            return
+        raise
     except Exception as e:
         job["status"] = "error"
         job["error"] = str(e)
@@ -2754,6 +2901,11 @@ async def start_montage(
     subtitle_font: Optional[str] = Form(None),
     face_tracking: bool = Form(False),
     autozoom: bool = Form(False),
+    camera_mode: str = Form(""),
+    follow_strength: float = Form(30.0),
+    lag_seconds: float = Form(0.4),
+    min_zoom: float = Form(1.12),
+    camera_wobble: bool = Form(False),
     blur_banned_words: bool = Form(False),
     subtitles: bool = Form(True),
     bigpickle: bool = Form(True),
@@ -2965,6 +3117,14 @@ async def start_montage(
         "subtitle_font": subtitle_font,
         "face_tracking": face_tracking,
         "autozoom": autozoom,
+        "camera_mode": _validate_camera_mode(camera_mode, face_tracking),
+        "follow_strength": _validate_float_range(
+            follow_strength, 0.0, 100.0, 30.0, "follow_strength") / 100.0,
+        "lag_seconds": _validate_float_range(
+            lag_seconds, 0.0, 3.0, 0.4, "lag_seconds"),
+        "min_zoom": _validate_float_range(
+            min_zoom, 1.05, 1.25, 1.12, "min_zoom"),
+        "camera_wobble": bool(camera_wobble),
         "mirror_horizontal": False,
         "blur_banned_words": blur_banned_words,
         "subtitles": subtitles,
@@ -3003,7 +3163,7 @@ async def start_montage(
     async def _run_montage_then_variant() -> None:
         await process_montage(job_id, params)
         job = jobs.get(job_id) or {}
-        if job.get("status") == "error":
+        if job.get("status") in {"error", "cancelled"} or _cancel_requested(job_id):
             return
         # ---- Phase B: mirrored variant (optional, one toggle) ----
         if params.get("prepare_mirrored"):
@@ -3020,9 +3180,9 @@ async def start_montage(
         await broadcast_progress(job_id, 98, "verifying_outputs", "Проверка результатов")
         await _finalize_montage(job_id)
 
-    asyncio.create_task(_run_montage_then_variant())
+    _track_montage_task(job_id, _run_montage_then_variant())
     if propose_cover:
-        asyncio.create_task(process_cover_suggestions(job_id))
+        _track_montage_task(job_id, process_cover_suggestions(job_id))
     return {"job_id": job_id, "filename": original_name}
 
 
@@ -3140,13 +3300,14 @@ async def publish_montage(
         job["selected_cover_id"] = cover_id
         job["last_publish_targets"] = targets
         _save_montage_job(job_id)
-        asyncio.create_task(
+        _track_montage_task(
+            job_id,
             _prepare_then_publish(
                 job_id, targets, lock,
                 cover_path=str(cover_path) if cover_id else None,
                 cover_id=cover_id,
                 prepare_ids=set(preparable_ids),
-            )
+            ),
         )
     except BaseException:
         if lock.locked():
@@ -3158,6 +3319,86 @@ async def publish_montage(
         "targets": [t.get("kind") for t in targets],
         "auto_prepare": auto_prepare,
     }
+
+
+@app.post("/api/montage/{job_id}/cancel")
+async def cancel_montage(job_id: str):
+    """Stop every running process of a montage job ("передумал").
+
+    Stops the render / mirrored variant / covers / preparation / publication,
+    kills their FFmpeg subprocesses and then:
+
+    * if the main video was never produced — deletes the whole workdir and
+      the job itself (plus the auto-created ``p_<job_id>`` project), so the
+      user can start from scratch;
+    * otherwise — keeps the finished files and only marks the interrupted
+      processes as cancelled, so completed work is never lost.
+    """
+    job = jobs.get(job_id)
+    if job is None or job.get("kind") != "montage":
+        raise HTTPException(404, "Montage job not found")
+    tasks = [t for t in MONTAGE_TASKS.get(job_id, set()) if not t.done()]
+    busy = bool(tasks) or job.get("status") in {"uploaded", "processing", "publishing"} \
+        or job.get("cover_status") == "generating" or job.get("prepare_status") == "running"
+    if not busy:
+        raise HTTPException(409, "Нет активных процессов для отмены")
+    job["cancel_requested"] = True
+    _save_montage_job(job_id)
+    await _montage_announce(job_id, "Отмена по запросу пользователя...")
+    montage_engine.cancel_job_procs(job_id)
+    if tasks:
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True), timeout=30)
+        except asyncio.TimeoutError:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+    job = jobs.get(job_id)
+    if job is None:
+        return {"job_id": job_id, "cancelled": True, "wiped": True}
+    result_video = str((job.get("result") or {}).get("result_video") or "")
+    has_result = bool(result_video) and Path(result_video).is_file() \
+        and Path(result_video).stat().st_size > 0
+    if has_result or job.get("status") in {"done", "completed", "published"}:
+        # Finished work survives: only mark what was interrupted.
+        if job.get("status") in {"uploaded", "processing", "publishing"}:
+            job["status"] = "done"
+            job["stage"] = "cancelled"
+            job["detail"] = "Отменено пользователем. Готовые файлы сохранены."
+            job["error"] = None
+            mark_operation_failed(job_id, "Отменено пользователем")
+        if isinstance(job.get("mirror_variant"), dict) \
+                and job["mirror_variant"].get("status") == "generating":
+            job["mirror_variant"].update(status="cancelled", error="Отменено пользователем",
+                                         detail="Отменено пользователем")
+        if job.get("cover_status") == "generating":
+            job.update(cover_status="cancelled", cover_error="Отменено пользователем",
+                       cover_detail="Отменено пользователем")
+        if job.get("prepare_status") == "running":
+            job.update(prepare_status="cancelled", prepare_error="Отменено пользователем")
+        shutil.rmtree(MONTAGE_WORK / job_id / _MIRROR_VARIANT_DIR, ignore_errors=True)
+        _save_montage_job(job_id)
+        await broadcast_progress(job_id, job.get("progress", 0), "cancelled", "Отменено пользователем")
+        return {"job_id": job_id, "cancelled": True, "wiped": False}
+    # Nothing usable was produced: remove everything to start from scratch.
+    shutil.rmtree(MONTAGE_WORK / job_id, ignore_errors=True)
+    jobs.pop(job_id, None)
+    MONTAGE_TASKS.pop(job_id, None)
+    auto_project_id = f"p_{job_id}"
+    workdir_resolved = str((MONTAGE_WORK / job_id).resolve())
+    async with PROJECTS_LOCK:
+        project = PROJECTS.get(auto_project_id)
+        if project is not None:
+            try:
+                video_resolved = str(Path(str(project.get("video_path") or "")).resolve())
+            except Exception:
+                video_resolved = ""
+            if video_resolved.startswith(workdir_resolved):
+                PROJECTS.pop(auto_project_id, None)
+                _save_projects()
+    return {"job_id": job_id, "cancelled": True, "wiped": True}
 
 
 _youtube_reauth_state: dict[str, str] = {"status": "idle", "detail": ""}
@@ -3304,7 +3545,7 @@ async def generate_montage_cover(job_id: str, timestamp: float = Form(...), titl
         cover_error=None,
     )
     _save_montage_job(job_id)
-    asyncio.create_task(process_custom_cover(job_id, max(0, timestamp), title))
+    _track_montage_task(job_id, process_custom_cover(job_id, max(0, timestamp), title))
     return {"status": "generating"}
 
 

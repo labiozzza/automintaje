@@ -1203,20 +1203,31 @@ select option { background: var(--surface2); }
           </div>
         </div>
         <div style="margin-top:16px">
-          <div class="toggle-row">
-            <div>
-              <div class="toggle-label">Отслеживание лица</div>
-              <div class="toggle-desc">MediaPipe — анализ положения лица по кадрам</div>
-            </div>
-            <label class="toggle">
-              <input type="checkbox" id="montageFaceTrack" onchange="updateAutozoomDependencyNote()">
-              <div class="toggle-slider"></div>
+          <div class="toggle-label">Управление камерой</div>
+          <div class="toggle-desc" style="margin-bottom:8px">Как виртуальная камера работает с лицом в кадре</div>
+          <label class="publish-target"><input type="radio" name="cameraMode" value="off" checked onchange="updateCameraModeUI()"> Выключено — исходное кадрирование</label>
+          <label class="publish-target"><input type="radio" name="cameraMode" value="hold" onchange="updateCameraModeUI()"> Удержание глаз — камера держит глаза в точке 0.50 × 0.42</label>
+          <label class="publish-target"><input type="radio" name="cameraMode" value="live" onchange="updateCameraModeUI()"> Живая камера — плавно догоняет движения головы</label>
+          <div id="liveCameraSettings" style="display:none;margin:10px 0 0 24px;font-size:13px">
+            <label style="display:block;margin-bottom:8px">Сила следования: <span id="followStrengthVal">30%</span><br>
+              <input type="range" id="followStrength" min="0" max="100" value="30" style="width:100%"
+                     oninput="document.getElementById('followStrengthVal').textContent=this.value+'%'">
+              <span style="color:var(--text2)">0% — камера стоит, 100% — как удержание глаз</span>
             </label>
+            <label style="display:block;margin-bottom:8px">Инерция камеры, сек:
+              <input type="number" id="lagSeconds" min="0" max="3" step="0.1" value="0.4" style="width:70px">
+              <span style="color:var(--text2)">задержка догона</span>
+            </label>
+            <label style="display:block;margin-bottom:8px">Минимальное приближение:
+              <input type="number" id="minZoom" min="5" max="25" step="1" value="12" style="width:70px"> %
+              <span style="color:var(--text2)">запас кадра для движения камеры</span>
+            </label>
+            <label class="publish-target"><input type="checkbox" id="cameraWobble"> Микропокачивание камеры (слабое, можно выключить)</label>
           </div>
-          <div class="toggle-row">
+          <div class="toggle-row" style="margin-top:12px">
             <div>
               <div class="toggle-label">Автозум</div>
-              <div class="toggle-desc">Умный зум по смыслу текста</div>
+              <div class="toggle-desc">Умный зум по смыслу текста, работает и без камеры</div>
             </div>
             <label class="toggle">
               <input type="checkbox" id="montageAutozoom" onchange="updateAutozoomDependencyNote()">
@@ -1354,6 +1365,8 @@ select option { background: var(--surface2); }
                   aria-controls="operationsBody" onclick="toggleOperationsBody()">
             <span id="operationToggleLabel">Скрыть подробности</span>
           </button>
+          <button type="button" class="btn" id="montageCancelBtn" style="display:none;margin-top:8px"
+                  onclick="cancelMontage()">Остановить</button>
         </div>
         <div class="ops-body" id="operationsBody"></div>
         <div class="progress-detail" id="montageLog" style="max-height:140px;overflow:auto;white-space:pre-wrap;font-size:12px"></div>
@@ -1811,7 +1824,8 @@ function clearMontageOutput(clearJob = false) {
   }
   document.getElementById('montageResultsCard').classList.remove('active');
   document.getElementById('openPublishWindowBtn').disabled = true;
-  document.getElementById('montagePublishResults').innerHTML = '';
+  const cancelBtn = document.getElementById('montageCancelBtn');
+  if (cancelBtn) cancelBtn.style.display = 'none';  document.getElementById('montagePublishResults').innerHTML = '';
   document.getElementById('montagePublishModalResults').innerHTML = '';
   document.getElementById('montagePublishLiveProgress').innerHTML = '';
   document.getElementById('montagePublishError').classList.remove('active');
@@ -2771,25 +2785,36 @@ function updatePreviewSubtitleMode() {
   window.__projectOverlay.setSegments(buildPreviewSubtitleSegments(window.__lastSegs || [], mode));
 }
 
+function selectedCameraMode() {
+  const checked = document.querySelector('input[name="cameraMode"]:checked');
+  return checked ? checked.value : 'off';
+}
+
+function updateCameraModeUI() {
+  const live = selectedCameraMode() === 'live';
+  document.getElementById('liveCameraSettings').style.display = live ? '' : 'none';
+  updateAutozoomDependencyNote();
+}
+
 function updateAutozoomDependencyNote() {
   const note = document.getElementById('autozoomDependencyNote');
   if (!note) return;
-  const face = document.getElementById('montageFaceTrack');
   const zoom = document.getElementById('montageAutozoom');
-  const faceOn = !!(face && face.checked);
+  const mode = selectedCameraMode();
   const zoomOn = !!(zoom && zoom.checked);
+  const modeLabel = mode === 'hold' ? 'Удержание глаз' : mode === 'live' ? 'Живая камера' : 'Камера выключена';
   let text;
-  if (zoomOn && faceOn) {
-    text = 'Отслеживание лица включено: автозум держит кадр на лице и работает точнее.';
-  } else if (zoomOn && !faceOn) {
-    text = 'Автозум включён без отслеживания лица — зум идёт по общему кадру и может быть менее точным. Включите «Отслеживание лица» выше для следования за лицом.';
-  } else if (!zoomOn && faceOn) {
-    text = 'Отслеживание лица включено, но автозум выключен — результат отслеживания не будет использован.';
+  if (zoomOn && mode !== 'off') {
+    text = modeLabel + ' + автозум: камера следит за глазами, масштаб идёт по смыслу текста.';
+  } else if (zoomOn && mode === 'off') {
+    text = 'Автозум включён без камеры — зум идёт относительно неподвижного центра кадра.';
+  } else if (!zoomOn && mode !== 'off') {
+    text = modeLabel + ' работает с постоянным масштабом (запас кадра для движения).';
   } else {
-    text = 'Отслеживание лица даёт данные для автозума. Без него автозум работает по общему кадру.';
+    text = 'Камера и автозум выключены — исходное кадрирование без эффектов.';
   }
   note.textContent = text;
-  note.classList.toggle('active', zoomOn && faceOn);
+  note.classList.toggle('active', true);
 }
 
 let animationBuilderFrames = [];
@@ -2985,7 +3010,13 @@ async function startMontage() {
   const subtitleFont = document.getElementById('montageSubtitleFont').value;
   if (subtitleFont) form.append('subtitle_font', subtitleFont);
   form.append('edge_mode', document.getElementById('montageEdgeMode').value);
-  form.append('face_tracking', document.getElementById('montageFaceTrack').checked);
+  const cameraMode = selectedCameraMode();
+  form.append('camera_mode', cameraMode);
+  form.append('face_tracking', cameraMode !== 'off');
+  form.append('follow_strength', document.getElementById('followStrength').value || 30);
+  form.append('lag_seconds', document.getElementById('lagSeconds').value || 0.4);
+  form.append('min_zoom', 1 + (parseFloat(document.getElementById('minZoom').value || 12) / 100));
+  form.append('camera_wobble', document.getElementById('cameraWobble').checked);
   form.append('autozoom', document.getElementById('montageAutozoom').checked);
   form.append('prepare_mirrored', document.getElementById('montagePrepareMirrored').checked);
   form.append('blur_banned_words', document.getElementById('montageBlurBannedWords').checked);
@@ -3457,9 +3488,18 @@ async function refreshMontageResult() {
   montageRefreshInFlight = true;
   try {
     const res = await fetch(`/api/montage/result/${requestedJobId}`);
+    if (res.status === 404) {
+      // Job was wiped by cancel: reset to fresh input state.
+      if (requestedJobId !== montageJobId) return;
+      clearInterval(montagePollTimer);
+      montagePollTimer = null;
+      beginNewMontageInput();
+      return;
+    }
     const data = await res.json();
     if (requestedJobId !== montageJobId) return;
     mergeOpsState(data);
+    updateCancelBtn(data);
     montageUpdateProgress(data.progress || 0, data.stage || data.status, data.detail || '', false);
     renderOperations(window.__opsState);
     if (data.selected_cover_id && !window.__selectedCoverId) {
@@ -3719,6 +3759,37 @@ async function publishMontage() {
     document.getElementById('montagePublishBtn').textContent = 'Начать публикацию';
   } finally {
     clearTimeout(requestTimeout);
+  }
+}
+
+function updateCancelBtn(data) {
+  const btn = document.getElementById('montageCancelBtn');
+  if (!btn) return;
+  const busy = ['uploaded', 'processing', 'publishing'].includes(data.status)
+    || data.cover_status === 'generating'
+    || data.prepare_status === 'running'
+    || !!((data.mirror_variant || {}).status === 'generating');
+  btn.style.display = busy ? '' : 'none';
+}
+
+async function cancelMontage() {
+  if (!montageJobId) return;
+  if (!window.confirm('Остановить все процессы? Незавершённая работа будет удалена, чтобы можно было начать сначала. Готовые файлы сохранятся.')) return;
+  const btn = document.getElementById('montageCancelBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/montage/${montageJobId}/cancel`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+    if (data.wiped) {
+      beginNewMontageInput();
+    } else {
+      refreshMontageResult();
+    }
+  } catch (e) {
+    alert('Не удалось отменить: ' + e.message);
+  } finally {
+    btn.disabled = false;
   }
 }
 

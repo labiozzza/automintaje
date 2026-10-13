@@ -356,11 +356,16 @@ def montage_plan(options: Dict[str, Any]) -> List[Stage]:
     if options.get("mirror_horizontal"):
         stages.append(Stage("mirror", "Отражение видео", 2.0))
     stages.append(Stage("configs", "Анализ текста и настройка эффектов", 4.0))
-    do_face = bool(options.get("face_tracking")) and bool(options.get("autozoom"))
-    if do_face:
+    raw_mode = options.get("camera_mode")
+    if raw_mode in (None, ""):
+        camera_mode = "hold" if options.get("face_tracking") else "off"
+    else:
+        camera_mode = str(raw_mode).lower()
+    camera_on = camera_mode in {"hold", "live"}
+    zoom_stage = bool(options.get("autozoom")) or camera_on
+    if zoom_stage:
         stages.append(Stage("faces", "Отслеживание лица", 15.0))
-    if options.get("autozoom"):
-        stages.append(Stage("zoom", "Автозум", 12.0))
+        stages.append(Stage("zoom", "Автозум и камера", 12.0))
     if options.get("subtitles", True):
         stages.append(Stage("subtitles", "Создание субтитров", 20.0))
     overlays = options.get("overlays") if isinstance(options.get("overlays"), list) else []

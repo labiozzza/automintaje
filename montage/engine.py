@@ -34,6 +34,64 @@ PYTHON = sys.executable
 _internet_cache: dict[str, Any] = {"t": 0.0, "ok": False}
 
 
+class MontageCancelled(Exception):
+    """Raised inside worker threads when the user cancels the job.
+
+    Unlike a real failure this must never mark the job as ``error``: the app
+    layer checks the per-job cancel flag and reports ``cancelled`` instead.
+    """
+
+
+# Registry of live subprocesses per engine job id.  The render pipeline runs
+# in a worker thread blocked in ``Popen.wait()``; cancelling the asyncio task
+# alone cannot stop it, so ``cancel_job_procs`` kills the processes and the
+# blocked waits return immediately.
+_JOB_PROCS: dict[str, set[subprocess.Popen]] = {}
+_JOB_PROCS_LOCK = threading.Lock()
+
+
+def register_job_proc(job_id: str | None, proc: subprocess.Popen) -> None:
+    if not job_id:
+        return
+    with _JOB_PROCS_LOCK:
+        _JOB_PROCS.setdefault(job_id, set()).add(proc)
+
+
+def unregister_job_proc(job_id: str | None, proc: subprocess.Popen) -> None:
+    if not job_id:
+        return
+    with _JOB_PROCS_LOCK:
+        procs = _JOB_PROCS.get(job_id)
+        if procs is not None:
+            procs.discard(proc)
+            if not procs:
+                _JOB_PROCS.pop(job_id, None)
+
+
+def cancel_job_procs(job_id: str) -> int:
+    """Kill every tracked subprocess of *job_id* (plus ``<job_id>_mirror``).
+
+    Returns the number of processes signalled.
+    """
+    with _JOB_PROCS_LOCK:
+        targets = [key for key in _JOB_PROCS if key in (job_id, f"{job_id}_mirror")]
+        procs = [proc for key in targets for proc in _JOB_PROCS.pop(key, set())]
+    killed = 0
+    for proc in procs:
+        try:
+            if proc.poll() is None:
+                proc.kill()
+                killed += 1
+        except Exception:
+            pass
+    for proc in procs:
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            pass
+    return killed
+
+
 def log(type_: str, message: str) -> None:
     print(f"[montage] {type_}: {message}", file=sys.stderr)
 
@@ -124,6 +182,7 @@ def run_cmd(
     line_cb: Callable[[str], None] | None = None,
     timeout: int = 3600,
     env: dict[str, str] | None = None,
+    job_id: str | None = None,
 ) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8", errors="replace") as log:
@@ -137,16 +196,20 @@ def run_cmd(
             errors="replace",
             env=env,
         )
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            log.write(line)
-            if line_cb:
-                try:
-                    line_cb(line)
-                except Exception:
-                    pass
-        proc.stdout.close()
-        return proc.wait()
+        register_job_proc(job_id, proc)
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                log.write(line)
+                if line_cb:
+                    try:
+                        line_cb(line)
+                    except Exception:
+                        pass
+            proc.stdout.close()
+            return proc.wait()
+        finally:
+            unregister_job_proc(job_id, proc)
 
 
 def usable_video(path: Path | str | None) -> bool:
@@ -177,13 +240,17 @@ def run_ffmpeg_progress(
     cwd: Path | None = None,
     log_path: Path | None = None,
     timeout: int = 1800,
+    job_id: str | None = None,
+    cancel_cb: Callable[[], bool] | None = None,
 ) -> int:
     """Run an ffmpeg command and report real progress from ``-progress pipe:1``.
 
     FFmpeg emits ``out_time_us``/``out_time_ms`` in **microseconds** (the ``ms``
     name is a long-standing quirk), so we divide by 1_000_000 — never by 1000 —
     and clamp against the probed ``duration``.  Reading happens on a worker
-    thread so a hung encoder cannot block the UI forever.
+    thread so a hung encoder cannot block the UI forever.  When ``cancel_cb``
+    reports cancellation the encoder is killed and ``MontageCancelled`` is
+    raised.
     """
     ff = cmd[0] if cmd else (shutil.which("ffmpeg") or "ffmpeg")
     full = [ff, "-hide_banner", "-nostats", "-loglevel", "error",
@@ -204,6 +271,7 @@ def run_ffmpeg_progress(
             log_file.close()
         raise RuntimeError("ffmpeg не найден")
     assert proc.stdout is not None
+    register_job_proc(job_id, proc)
     seen_end = {"done": False}
 
     def _reader() -> None:
@@ -240,13 +308,50 @@ def run_ffmpeg_progress(
 
     reader = threading.Thread(target=_reader, daemon=True)
     reader.start()
+    deadline = time.monotonic() + max(1, timeout)
     try:
-        code = proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-        reader.join(timeout=5)
-        raise RuntimeError("ffmpeg превысил лимит времени")
+        # Poll in short slices instead of one long wait so a user cancel is
+        # honoured within a second even if nobody kills the process externally.
+        code: int | None = None
+        while code is None:
+            try:
+                code = proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                if cancel_cb is not None:
+                    try:
+                        cancelled = bool(cancel_cb())
+                    except Exception:
+                        cancelled = False
+                    if cancelled:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                        try:
+                            proc.wait(timeout=10)
+                        except Exception:
+                            pass
+                        raise MontageCancelled("Отменено пользователем")
+                if time.monotonic() >= deadline:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=10)
+                    except Exception:
+                        pass
+                    raise RuntimeError("ffmpeg превысил лимит времени")
+                continue
+    except BaseException:
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        raise
+    finally:
+        unregister_job_proc(job_id, proc)
     reader.join(timeout=5)
     if log_file is not None:
         log_file.close()
@@ -313,6 +418,143 @@ def ffprobe(path: Path) -> dict[str, Any]:
     return json.loads(result.stdout)
 
 
+CAMERA_MODES = ("off", "hold", "live")
+
+# Legacy UI values that predate render.camera; "scale" never existed in the
+# renderer ("reflect"/"replicate"/"black"/"clamp" do).  Saved jobs store
+# "scale", so normalize it to "clamp" (no artificial fill, eyes may drift).
+_EDGE_MODE_ALIASES = {"scale": "clamp"}
+
+
+def normalize_edge_mode(raw: Any) -> str:
+    mode = str(raw or "clamp").lower()
+    mode = _EDGE_MODE_ALIASES.get(mode, mode)
+    if mode not in {"reflect", "replicate", "black", "clamp"}:
+        return "clamp"
+    return mode
+
+
+def resolve_camera_options(options: dict[str, Any]) -> dict[str, Any]:
+    """Resolve virtual-camera settings from montage params (testable).
+
+    Backward compatibility: jobs saved before ``camera_mode`` existed only
+    carry ``face_tracking`` — that means eye hold.  Returns the normalized
+    camera block plus pipeline flags (``do_track``, ``do_zoom_stage``).
+    """
+    options = options or {}
+    raw_mode = options.get("camera_mode")
+    if raw_mode in (None, ""):
+        mode = "hold" if options.get("face_tracking") else "off"
+    else:
+        mode = str(raw_mode).lower()
+    if mode not in CAMERA_MODES:
+        mode = "off"
+
+    def _num(key: str, default: float, low: float, high: float) -> float:
+        try:
+            value = float(options.get(key, default))
+        except (TypeError, ValueError):
+            value = float(default)
+        return min(high, max(low, value))
+
+    camera = {
+        "mode": mode,
+        "eye_x": 0.50,
+        "eye_y": 0.42,
+        "follow_strength": _num("follow_strength", 0.30, 0.0, 1.0),
+        "lag_seconds": _num("lag_seconds", 0.40, 0.0, 3.0),
+        "min_zoom": _num("min_zoom", 1.12, 1.05, 1.25),
+        "max_speed": _num("cam_max_speed", 0.35, 0.0, 2.0),
+        "wobble": bool(options.get("camera_wobble", False)),
+    }
+    return {
+        "camera": camera,
+        "edge_mode": normalize_edge_mode(options.get("edge_mode")),
+        "do_track": mode in {"hold", "live"},
+        "do_zoom_stage": bool(options.get("autozoom", False)) or mode != "off",
+    }
+
+
+def write_static_tracking(
+    tracking_path: Path,
+    *,
+    width: int,
+    height: int,
+    fps: float,
+    duration: float,
+) -> None:
+    """Write a faceless tracking file so the zoom stage runs without MediaPipe.
+
+    All samples report ``face_found=False``; with camera mode ``off`` the
+    renderer ignores anchors and zooms around the static center.
+    """
+    fps = max(1.0, float(fps or 30.0))
+    duration = max(0.5, float(duration or 0.0))
+    step = max(1, int(round(fps / 10.0)))
+    n = max(1, int(round(duration * fps / step)))
+    samples = []
+    for i in range(n):
+        t = i * step / fps
+        samples.append({
+            "frame": i * step,
+            "time": round(t, 6),
+            "face_found": False,
+            "confidence": 0.0,
+            "left_eye": None,
+            "right_eye": None,
+            "eye_center": {"x": 0.5, "y": 0.42},
+            "target": {"x": 0.5, "y": 0.42, "zoom": 1.0},
+        })
+    tracking_path.parent.mkdir(parents=True, exist_ok=True)
+    tracking_path.write_text(json.dumps({
+        "source": {"path": "", "width": width, "height": height,
+                   "fps": fps, "duration": duration, "frames": int(duration * fps)},
+        "settings": {"eye_y_offset": 0.06},
+        "camera_targets": samples,
+        "_static_anchors": True,
+    }, ensure_ascii=False), encoding="utf-8")
+
+
+def inject_camera_config(
+    zoom_config_path: Path,
+    camera_cfg: dict[str, Any],
+    edge_mode: str,
+    autozoom_on: bool,
+) -> None:
+    """Inject per-job camera settings into a generated zoom config.
+
+    The generator stays neutral; this makes config and CLI agree.  When the
+    semantic autozoom is off, its timeline is flattened to a single default
+    event so only the constant camera floor (``max(default, min_zoom)``)
+    applies — otherwise the toggle would be a no-op whenever a camera mode
+    runs the zoom stage.  An explicit user ``zoom_timeline_override`` is kept:
+    it is applied by the caller before this runs and counts as intent.
+    """
+    try:
+        cfg = json.loads(zoom_config_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"Не удалось прочитать настройки камеры: {exc}")
+    render = cfg.get("render")
+    if not isinstance(render, dict):
+        render = {}
+        cfg["render"] = render
+    if not autozoom_on:
+        zoom_cfg = render.get("zoom")
+        if isinstance(zoom_cfg, dict):
+            default_zoom = zoom_cfg.get("default_zoom", 1.0)
+            try:
+                default_zoom = max(1.0, float(default_zoom))
+            except (TypeError, ValueError):
+                default_zoom = 1.0
+            zoom_cfg["timeline"] = [{"time": 0.0, "zoom": default_zoom}]
+    render["camera"] = dict(camera_cfg)
+    render["edge_mode"] = edge_mode
+    try:
+        zoom_config_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        raise RuntimeError(f"Не удалось записать настройки камеры: {exc}")
+
+
 def ensure_tracking_has_anchors(tracking_path: Path) -> bool:
     """apply_face_zoom_v5 requires >=1 face-anchor. If the video had no detected faces,
     synthesize center-anchored targets so zoom/render still works (camera stays centered)."""
@@ -357,6 +599,7 @@ def render_montage(
     progress_cb: Callable[[float, str, str], None],
     log_cb: Callable[[str], None],
     report_cb: Callable[[dict[str, Any]], None] | None = None,
+    cancel_cb: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     load_secrets_env()
     workdir.mkdir(parents=True, exist_ok=True)
@@ -434,7 +677,17 @@ def render_montage(
         progress_cb(snap["progress"], snap.get("active_stage") or snap["status"],
                     snap.get("detail", ""))
 
+    def _throw_if_cancelled() -> None:
+        if cancel_cb is not None:
+            try:
+                cancelled = bool(cancel_cb())
+            except Exception:
+                cancelled = False
+            if cancelled:
+                raise MontageCancelled("Отменено пользователем")
+
     def _start(key: str, detail: str = "") -> None:
+        _throw_if_cancelled()
         tracker.start(key, detail)
         _emit()
 
@@ -472,7 +725,7 @@ def render_montage(
             _code = run_ffmpeg_progress(_cmd, duration=_duration, cwd=workdir,
                                         log_path=workdir / "rotate.log",
                                         on_progress=lambda p: _upd("rotate", p),
-                                        timeout=1800)
+                                        timeout=1800, job_id=job_id, cancel_cb=cancel_cb)
             if _code == 0 and _norm.exists():
                 source_video = _norm
                 _done("rotate", "Ориентация нормализована")
@@ -498,7 +751,7 @@ def render_montage(
         code = run_ffmpeg_progress(mirror_cmd, duration=_duration, cwd=workdir,
                                    log_path=workdir / "mirror.log",
                                    on_progress=lambda p: _upd("mirror", p),
-                                   timeout=1800)
+                                   timeout=1800, job_id=job_id, cancel_cb=cancel_cb)
         if code != 0 or not mirrored_source.exists():
             raise RuntimeError("Не удалось отразить исходное видео")
         source_video = mirrored_source
@@ -509,11 +762,14 @@ def render_montage(
     animation_cfg = options.get("animation") or {}
     overlays_cfg = options.get("overlays") if isinstance(options.get("overlays"), list) else []
     zoom_override = options.get("zoom_timeline_override")
-    do_face_track = bool(options.get("face_tracking", False))
-    do_zoom = bool(options.get("autozoom", False))
+    resolved_camera = resolve_camera_options(options)
+    camera_cfg = resolved_camera["camera"]
+    edge_mode = resolved_camera["edge_mode"]
+    do_track = resolved_camera["do_track"]
+    do_zoom = resolved_camera["do_zoom_stage"]
+    log_cb(f"Камера: {camera_cfg['mode']}; автозум: {'вкл' if options.get('autozoom') else 'выкл'}")
     do_subtitles = bool(options.get("subtitles", True))
     use_bigpickle = bool(options.get("bigpickle", True)) and internet_available()
-    edge_mode = str(options.get("edge_mode") or "scale")
 
     log_cb(f"BigPickle: {use_bigpickle} (интернет {'есть' if internet_available() else 'нет'})")
 
@@ -528,7 +784,7 @@ def render_montage(
         [PYTHON, "-u", str(MONAGE_DIR / "generate_configs_from_transcript_srt.py"), str(transcript)],
         cwd=workdir, log_path=workdir / "configs.log", timeout=900,
         line_cb=lambda line: _upd("configs", None, line.strip()[:120]),
-        env=env,
+        env=env, job_id=job_id,
     )
     if code != 0:
         raise RuntimeError("Не удалось сгенерировать конфиги зума/субтитров")
@@ -569,6 +825,7 @@ def render_montage(
         config_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
 
     zoom_config_path = workdir / "zoom_timeline_config.json"
+    manual_timeline = False
     if zoom_override not in (None, [], "") and zoom_config_path.exists():
         cfg = json.loads(zoom_config_path.read_text(encoding="utf-8"))
         events = []
@@ -584,10 +841,17 @@ def render_montage(
         if events:
             cfg["render"]["zoom"]["timeline"] = events
             zoom_config_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+            manual_timeline = True
+
+    # The generator stays neutral about camera behaviour: per-job camera and
+    # edge settings are injected here so config and CLI always agree.
+    if zoom_config_path.exists():
+        inject_camera_config(zoom_config_path, camera_cfg, edge_mode,
+                             bool(options.get("autozoom", False)) or manual_timeline)
 
     _done("configs", "Конфиги готовы")
 
-    if do_face_track and do_zoom:
+    if do_track:
         _start("faces", "Анализ лиц и глаз (MediaPipe)...")
         if not face_model_ready():
             raise RuntimeError("Модель face_landmarker.task не найдена — она скачивается один раз при наличии интернета")
@@ -602,12 +866,37 @@ def render_montage(
             "--roi-upscale", "2.5",
         ]
         last_line: list[str] = ["Анализ лиц..."]
-        code = run_cmd(cmd, cwd=workdir, log_path=workdir / "tracking.log",
+        code = run_cmd(cmd, cwd=workdir, log_path=workdir / "tracking.log", job_id=job_id,
                        line_cb=lambda line: (last_line.clear(), last_line.append("Анализ лиц: " + line.strip()[:100])))
         if code != 0:
             raise RuntimeError("Анализ лиц не удался")
         ensure_tracking_has_anchors(tracking_path)
         _done("faces", "Анализ лиц завершён")
+    elif do_zoom:
+        # Zoom without face tracking: the renderer still needs a tracking
+        # file, so write static center anchors without MediaPipe.
+        if tracking_path.exists():
+            tracking_path.unlink()
+        _start("faces", "Подготовка неподвижной опорной точки...")
+        try:
+            probe = ffprobe(source_video)
+            streams = probe.get("streams") or []
+            video_stream = next((s for s in streams if s.get("codec_type") == "video"), {})
+            try:
+                num, den = str(video_stream.get("r_frame_rate") or "30/1").split("/")
+                static_fps = float(num) / float(den) if float(den) else 30.0
+            except (ValueError, ZeroDivisionError):
+                static_fps = 30.0
+            write_static_tracking(
+                tracking_path,
+                width=int(video_stream.get("width") or 0),
+                height=int(video_stream.get("height") or 0),
+                fps=static_fps,
+                duration=float((probe.get("format") or {}).get("duration") or 0),
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Не удалось подготовить опорную точку: {exc}")
+        _done("faces", "Неподвижная опорная точка готова")
     else:
         if tracking_path.exists():
             tracking_path.unlink()
@@ -633,7 +922,7 @@ def render_montage(
                         _upd("zoom", frac * 100, line.strip()[:140])
                     except Exception:
                         pass
-        code = run_cmd(cmd, cwd=workdir, log_path=workdir / "zoom.log", line_cb=zoom_line)
+        code = run_cmd(cmd, cwd=workdir, log_path=workdir / "zoom.log", line_cb=zoom_line, job_id=job_id)
         if code != 0:
             raise RuntimeError("Автозум не удался")
         _done("zoom", "Автозум готов")
@@ -672,7 +961,7 @@ def render_montage(
                     _upd("subtitles", source_pct, line.strip()[:140])
                 except Exception:
                     _upd("subtitles", None, line.strip()[:140])
-        code = run_cmd(cmd, cwd=workdir, log_path=workdir / "subtitles.log", line_cb=sub_line)
+        code = run_cmd(cmd, cwd=workdir, log_path=workdir / "subtitles.log", line_cb=sub_line, job_id=job_id)
         if code != 0:
             raise RuntimeError("Наложение субтитров не удалось")
         outputs[subtitle_mode] = out_mp4
@@ -773,7 +1062,7 @@ def render_montage(
                     _upd("animation", frac * 100, line.strip()[:140])
                 except Exception:
                     pass
-        code = run_cmd(cmd, cwd=workdir, log_path=workdir / "animation.log", line_cb=anim_line)
+        code = run_cmd(cmd, cwd=workdir, log_path=workdir / "animation.log", line_cb=anim_line, job_id=job_id)
         if code != 0:
             raise RuntimeError("Рендер визуальных слоёв не удался")
         final_mp4 = anim_out
@@ -798,9 +1087,27 @@ def render_montage(
                 "-af", build_volume_filter(muted_intervals),
                 "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(censored_mp4),
             ]
-            censor_result = subprocess.run(censor_cmd, capture_output=True, timeout=1800)
-            if censor_result.returncode != 0 or not censored_mp4.is_file():
-                detail = censor_result.stderr.decode("utf-8", errors="replace")[-400:]
+            censor_proc = subprocess.Popen(censor_cmd, stdout=subprocess.DEVNULL,
+                                            stderr=subprocess.PIPE, cwd=str(workdir))
+            register_job_proc(job_id, censor_proc)
+            try:
+                while True:
+                    try:
+                        _, censor_stderr = censor_proc.communicate(timeout=1.0)
+                        break
+                    except subprocess.TimeoutExpired:
+                        _throw_if_cancelled()
+                        continue
+            except MontageCancelled:
+                try:
+                    censor_proc.kill()
+                except Exception:
+                    pass
+                raise
+            finally:
+                unregister_job_proc(job_id, censor_proc)
+            if censor_proc.returncode != 0 or not censored_mp4.is_file():
+                detail = (censor_stderr or b"").decode("utf-8", errors="replace")[-400:]
                 raise RuntimeError(f"Не удалось заглушить нежелательные слова: {detail}")
             final_mp4 = censored_mp4
             log_cb(f"Нежелательные слова заглушены: {len(muted_intervals)} интервалов")
@@ -837,16 +1144,22 @@ def render_montage(
     with ThreadPoolExecutor(max_workers=2) as executor:
         delivery_future = executor.submit(
             run_ffmpeg_progress, delivery_cmd, duration=_duration, cwd=workdir,
-            log_path=workdir / "finalize.log", on_progress=_late_final, timeout=1800)
+            log_path=workdir / "finalize.log", on_progress=_late_final, timeout=1800,
+            job_id=job_id, cancel_cb=cancel_cb)
         preview_future = executor.submit(
             run_ffmpeg_progress, preview_cmd, duration=_duration, cwd=workdir,
-            log_path=workdir / "preview.log", on_progress=_late_preview, timeout=1800)
+            log_path=workdir / "preview.log", on_progress=_late_preview, timeout=1800,
+            job_id=job_id, cancel_cb=cancel_cb)
         try:
             delivery_code = delivery_future.result()
+        except MontageCancelled:
+            raise
         except Exception:
             delivery_code = 1
         try:
             preview_code = preview_future.result()
+        except MontageCancelled:
+            raise
         except Exception:
             preview_code = 1
     if delivery_code == 0 and usable_video(delivery_mp4):
@@ -901,8 +1214,12 @@ def render_montage(
         "result_video": str(Path(delivery_mp4).resolve()),
         "preview_video": str(Path(preview_mp4).resolve()),
         "subtitle_mode": subtitle_mode,
-        "face_tracking": do_face_track,
-        "autozoom": do_zoom,
+        "face_tracking": camera_cfg["mode"] != "off",
+        "camera_mode": camera_cfg["mode"],
+        "camera": {key: camera_cfg[key] for key in
+                   ("mode", "follow_strength", "lag_seconds", "min_zoom", "wobble")},
+        "autozoom": options.get("autozoom", False),
+        "zoom_stage": do_zoom,
         "mirror_horizontal": do_mirror,
         "subtitles": do_subtitles,
         "bigpickle": use_bigpickle,
@@ -939,7 +1256,9 @@ def _load_module(name: str, path: Path) -> ModuleType:
 
 
 def _transcode_to_fit(source: Path, output: Path, target_bytes: int, duration: float,
-                      progress_cb: Callable[[float, str], None]) -> None:
+                      progress_cb: Callable[[float, str], None],
+                      job_id: str | None = None,
+                      cancel_cb: Callable[[], bool] | None = None) -> None:
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
     audio_bitrate = 160_000
     vbr = max(400_000, int(target_bytes * 8 * 0.96 / max(0.1, duration)) - audio_bitrate)
@@ -953,20 +1272,37 @@ def _transcode_to_fit(source: Path, output: Path, target_bytes: int, duration: f
                "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", str(output)]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                 text=True, encoding="utf-8", errors="replace")
+        register_job_proc(job_id, proc)
         assert proc.stdout is not None
         last = -1
-        for line in proc.stdout:
-            key, _, value = line.strip().partition("=")
-            if key not in {"out_time_us", "out_time_ms"}:
-                continue
+        try:
+            for line in proc.stdout:
+                if cancel_cb is not None:
+                    try:
+                        cancelled = bool(cancel_cb())
+                    except Exception:
+                        cancelled = False
+                    if cancelled:
+                        raise MontageCancelled("Отменено пользователем")
+                key, _, value = line.strip().partition("=")
+                if key not in {"out_time_us", "out_time_ms"}:
+                    continue
+                try:
+                    percent = min(99, max(1, int(float(value) / 1_000_000 / max(0.1, duration) * 100)))
+                except (ValueError, ZeroDivisionError):
+                    continue
+                if percent != last:
+                    last = percent
+                    progress_cb(percent, f"Сжатие для публикации: {percent}%")
+            code = proc.wait()
+        except MontageCancelled:
             try:
-                percent = min(99, max(1, int(float(value) / 1_000_000 / max(0.1, duration) * 100)))
-            except (ValueError, ZeroDivisionError):
-                continue
-            if percent != last:
-                last = percent
-                progress_cb(percent, f"Сжатие для публикации: {percent}%")
-        code = proc.wait()
+                proc.kill()
+            except Exception:
+                pass
+            raise
+        finally:
+            unregister_job_proc(job_id, proc)
         if code != 0 or not output.exists():
             raise RuntimeError("ffmpeg transcode for publishing failed")
         if output.stat().st_size <= target_bytes:
@@ -1252,6 +1588,7 @@ def publish_job(
     confirmed_cb: Callable[[str, dict[str, Any]], None] | None = None,
     target_step_cb: Callable[[str, str, str, str, str], None] | None = None,
     prepared_targets: dict[str, dict[str, Any]] | None = None,
+    cancel_cb: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     instagram_priority = {("trial", False): 0, ("trial", True): 1, ("instagram", False): 2, ("instagram", True): 3}
     instagram_targets = sorted(
@@ -1286,6 +1623,13 @@ def publish_job(
         lane_errors: dict[str, str] = {}
         count = max(1, len(lane_targets))
         for index, target in enumerate(lane_targets):
+            if cancel_cb is not None:
+                try:
+                    cancelled = bool(cancel_cb())
+                except Exception:
+                    cancelled = False
+                if cancelled:
+                    raise MontageCancelled("Отменено пользователем")
             target_id = str(target.get("id") or target.get("kind") or f"target_{index}")
 
             def target_progress(percent: float, stage: str, detail: str) -> None:

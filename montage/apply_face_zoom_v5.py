@@ -29,6 +29,14 @@ from typing import Any
 import cv2
 import numpy as np
 
+try:
+    from .camera_trajectory import CameraSettings, compute_camera_track, settings_from_dict
+except ImportError:  # run as a script: `python montage/apply_face_zoom_v5.py`
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from montage.camera_trajectory import (  # noqa: E402
+        CameraSettings, compute_camera_track, settings_from_dict,
+    )
+
 
 EDGE_MODES = {
     "reflect": cv2.BORDER_REFLECT_101,
@@ -456,19 +464,16 @@ def build_interpolated_series(
     direct_strength: float,
     timeline_events: list[Any] | None,
     timeline_default_zoom: float,
-    timeline_transition: float,
-    eye_follow_lag: bool,
-    eye_lag_seconds: float,
+    timeline_transition: float = 0.0,
+    eye_follow_lag: bool = False,
+    eye_lag_seconds: float = 0.35,
+    camera: CameraSettings | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     settings = data.get("settings", {}) or {}
     eye_y_offset = float(settings.get("eye_y_offset", 0.06))
 
-    frames: list[int] = []
-    xs: list[float] = []
-    ys: list[float] = []
-    zs: list[float] = []
-
-    has_json_zoom = False
+    sample_frames: list[int] = []
+    sample_eyes: list[tuple[float, float] | None] = []
 
     for item in data["camera_targets"]:
         if not isinstance(item, dict):
@@ -483,56 +488,35 @@ def build_interpolated_series(
         frame = int(frame)
 
         anchor = extract_anchor(item, anchor_mode, eye_y_offset)
-        if anchor is None:
-            continue
+        if anchor is not None and not (math.isfinite(anchor[0]) and math.isfinite(anchor[1])):
+            anchor = None
+        sample_frames.append(frame)
+        sample_eyes.append(anchor)
 
-        x, y = anchor
-        if not (math.isfinite(x) and math.isfinite(y)):
-            continue
+    if not sample_frames:
+        fail("no face tracking samples found in camera_targets")
+    if not any(eye is not None for eye in sample_eyes):
+        print("WARNING: no valid face points in camera_targets; using static framing")
 
-        frames.append(frame)
-        xs.append(clamp(x, 0.0, 1.0))
-        ys.append(clamp(y, 0.0, 1.0))
+    use_json_zoom = False  # timeline/pulse/step/mixed sources below; json kept for CLI compat
+    if zoom_source == "json":
+        use_json_zoom = True
 
-        t = item.get("target") or {}
-        if "zoom" in t and t["zoom"] is not None:
-            has_json_zoom = True
-            zs.append(float(t["zoom"]))
+    if use_json_zoom:
+        zs_items: list[float] = []
+        for item in data["camera_targets"]:
+            if not isinstance(item, dict):
+                continue
+            t = item.get("target") or {}
+            zs_items.append(float(t["zoom"]) if t.get("zoom") is not None else float("nan"))
+        valid = [math.isfinite(z) for z in zs_items]
+        if any(valid):
+            out_frames = np.arange(total_frames, dtype=np.float64)
+            src = np.asarray(sample_frames, dtype=np.float64)
+            out_z = np.interp(out_frames, src[np.asarray(valid)],
+                              np.asarray(zs_items, dtype=np.float64)[np.asarray(valid)])
         else:
-            zs.append(float("nan"))
-
-    if not frames:
-        fail("no valid face points found in camera_targets")
-
-    order = np.argsort(np.asarray(frames, dtype=np.int64))
-    src_frames = np.asarray(frames, dtype=np.float64)[order]
-    src_x = np.asarray(xs, dtype=np.float64)[order]
-    src_y = np.asarray(ys, dtype=np.float64)[order]
-    src_z = np.asarray(zs, dtype=np.float64)[order]
-
-    # Remove duplicated frame numbers. Keep the last item for that frame.
-    unique_frames = np.unique(src_frames)
-    if len(unique_frames) != len(src_frames):
-        last_indices = []
-        for frame in unique_frames:
-            last_indices.append(np.where(src_frames == frame)[0][-1])
-        idx = np.asarray(last_indices, dtype=np.int64)
-        src_frames = src_frames[idx]
-        src_x = src_x[idx]
-        src_y = src_y[idx]
-        src_z = src_z[idx]
-
-    out_frames = np.arange(total_frames, dtype=np.float64)
-    out_x = np.interp(out_frames, src_frames, src_x)
-    out_y = np.interp(out_frames, src_frames, src_y)
-
-    if eye_follow_lag:
-        out_x, out_y = apply_eye_follow_lag(out_x, out_y, fps=fps, lag_seconds=eye_lag_seconds)
-
-    use_json_zoom = zoom_source == "json" or (zoom_source == "auto" and has_json_zoom)
-    if use_json_zoom and np.isfinite(src_z).any():
-        valid = np.isfinite(src_z)
-        out_z = np.interp(out_frames, src_frames[valid], src_z[valid])
+            out_z = np.full(total_frames, zoom_min, dtype=np.float64)
     elif zoom_source in {"auto", "pulse"}:
         out_z = build_pulse_zoom(
             total_frames=total_frames,
@@ -589,9 +573,21 @@ def build_interpolated_series(
     if zoom_source in {"step", "mixed", "timeline"} and step_percent_mode == "direct":
         # In direct mode --step-max-percent is the effective maximum zoom strength.
         # Do not clamp it back to --zoom-max, otherwise 60% would again become tiny.
-        out_z = np.maximum(out_z, zoom_min)
+        timeline_z = np.maximum(out_z, zoom_min).tolist()
+        upper = float("inf")
     else:
-        out_z = np.clip(out_z, zoom_min, zoom_max)
+        timeline_z = np.clip(out_z, zoom_min, zoom_max).tolist()
+        upper = float(zoom_max)
+
+    cam = camera or CameraSettings(mode="off")
+    track_x, track_y, track_z = compute_camera_track(
+        sample_frames, sample_eyes, fps, total_frames, timeline_z, cam,
+    )
+    out_x = np.asarray(track_x, dtype=np.float64)
+    out_y = np.asarray(track_y, dtype=np.float64)
+    out_z = np.asarray(track_z, dtype=np.float64)
+    if math.isfinite(upper):
+        out_z = np.minimum(out_z, upper)
     return out_x, out_y, out_z
 
 
@@ -670,7 +666,6 @@ def start_ffmpeg(output: Path, video_path: Path, width: int, height: int, fps: f
         "copy",
         "-movflags",
         "+faststart",
-        "-shortest",
         str(output),
     ]
 
@@ -895,6 +890,23 @@ def main() -> None:
     else:
         eye_follow_lag = cfg_bool(render_cfg, "eye_follow_lag", bool(args.eye_follow_lag))
         eye_lag_seconds = float(args.eye_lag_seconds)
+
+    raw_camera = cfg_get(render_cfg, "camera", None)
+    if not isinstance(raw_camera, dict):
+        # Legacy configs predate render.camera: the old always-on lag behaved
+        # like full-strength live follow, lag off meant eye hold.
+        raw_camera = {
+            "mode": "live" if eye_follow_lag else "hold",
+            "follow_strength": 1.0,
+            "lag_seconds": eye_lag_seconds,
+            "min_zoom": zoom_min,
+        }
+    else:
+        raw_camera = dict(raw_camera)
+    raw_camera.setdefault("eye_x", eye_screen_x)
+    raw_camera.setdefault("eye_y", eye_screen_y)
+    raw_camera.setdefault("min_zoom", zoom_min)
+    camera_settings = settings_from_dict(raw_camera)
     edge_mode = cfg_str(render_cfg, "edge_mode", args.edge_mode) or args.edge_mode
     if edge_mode not in {"reflect", "replicate", "black", "clamp"}:
         fail(f"unsupported render.edge_mode / --edge-mode: {edge_mode}")
@@ -938,6 +950,7 @@ def main() -> None:
         timeline_transition=timeline_transition,
         eye_follow_lag=eye_follow_lag,
         eye_lag_seconds=eye_lag_seconds,
+        camera=camera_settings,
     )
 
     print(
@@ -946,7 +959,9 @@ def main() -> None:
         f"steps={step_values}, step_percent_mode={step_percent_mode}, "
         f"direct_strength={direct_strength}, "
         f"max_effective_zoom={zoom_min * (1 + direct_strength * max(step_values) / 100):.3f}, "
-        f"eye_follow_lag={eye_follow_lag}, edge_mode={edge_mode}"
+        f"camera_mode={camera_settings.mode}, follow={camera_settings.follow_strength:.2f}, "
+        f"lag={camera_settings.lag_seconds:.2f}s, cam_min_zoom={camera_settings.min_zoom:.2f}, "
+        f"wobble={camera_settings.wobble}, edge_mode={edge_mode}"
     )
     print(
         f"zoom_debug: actual_min={float(np.min(zs)):.3f}, "

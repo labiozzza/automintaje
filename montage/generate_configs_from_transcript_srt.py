@@ -569,10 +569,11 @@ def main() -> None:
         "render": {
             "video": DEFAULT_SOURCE_VIDEO,
             "output": DEFAULT_ZOOM_OUTPUT,
-            "anchor_mode": "smoothed_eye",
+            # Camera behaviour is injected by the engine per job
+            # (render.camera + render.edge_mode); the generator stays neutral
+            # and only describes the semantic zoom timeline.
+            "anchor_mode": "eye_center",
             "eye_screen": {"x": 0.5, "y": 0.42},
-            "eye_follow_lag": {"enabled": True, "seconds": 0.35},
-            "edge_mode": "reflect",
             "encoding": {"crf": 0, "preset": "medium"},
             "zoom": {
                 "source": "timeline",

@@ -103,7 +103,7 @@ async def _noop(*args, **kwargs):
 
 
 def _fake_render_factory(calls):
-    def fake_render(purpose, source, target_dir, stem, mirrored, progress):
+    def fake_render(purpose, source, target_dir, stem, mirrored, progress, cancel_cb=None):
         calls.append((purpose, mirrored))
         if callable(progress):
             progress(100, "готово")

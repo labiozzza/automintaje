@@ -17,7 +17,6 @@ LEFT_EYE_INDICES = [33, 133, 159, 145, 153, 154, 155, 246, 161, 160, 158, 157, 1
 RIGHT_EYE_INDICES = [362, 263, 386, 374, 380, 381, 382, 466, 388, 387, 385, 384, 398]
 
 CENTER_FALLBACK = {"x": 0.5, "y": 0.42, "zoom": 1.0}
-LOST_FACE_HOLD_SECONDS = 1.0
 
 
 def fail(message: str) -> None:
@@ -47,6 +46,38 @@ def choose_largest_face(all_faces: list[list[Any]]) -> Optional[list[Any]]:
     if not all_faces:
         return None
     return max(all_faces, key=face_area)
+
+
+def choose_stable_face(
+    all_faces: list[list[Any]],
+    previous_eye: Optional[dict[str, float]],
+    area_tolerance: float = 0.85,
+) -> Optional[list[Any]]:
+    """Pick the main face with hysteresis against swaps.
+
+    Among faces within *area_tolerance* of the largest one, prefer the face
+    whose eye center is closest to the previous frame's.  This keeps the
+    camera from jumping between people of similar size while still switching
+    when a clearly larger face appears.
+    """
+    if not all_faces:
+        return None
+    if previous_eye is None:
+        return max(all_faces, key=face_area)
+    areas = [face_area(face) for face in all_faces]
+    best = max(areas)
+    previous = (float(previous_eye["x"]), float(previous_eye["y"]))
+    candidates = []
+    for face, area in zip(all_faces, areas):
+        if area < best * area_tolerance:
+            continue
+        center = avg_landmark(face, LEFT_EYE_INDICES + RIGHT_EYE_INDICES)
+        dist = ((center["x"] - previous[0]) ** 2 + (center["y"] - previous[1]) ** 2) ** 0.5
+        candidates.append((dist, face))
+    if not candidates:
+        return max(all_faces, key=face_area)
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
 
 
 def zoom_for_time(time_sec: float, zoom_base: float, zoom_in: float, zoom_period: float) -> float:
@@ -267,8 +298,8 @@ def process_video(args: argparse.Namespace) -> dict[str, Any]:
     analyzed = 0
     found = 0
     previous_smoothed: Optional[dict[str, float]] = None
+    previous_eye: Optional[dict[str, float]] = None
     last_valid_raw: Optional[dict[str, float]] = None
-    last_valid_time: Optional[float] = None
 
     with FaceLandmarker.create_from_options(options) as landmarker:
         pbar_total = frame_count if frame_count > 0 else None
@@ -294,7 +325,7 @@ def process_video(args: argparse.Namespace) -> dict[str, Any]:
                 mp_image = make_mp_image_from_bgr(roi_frame)
                 result = landmarker.detect_for_video(mp_image, timestamp_ms)
 
-                selected_face = choose_largest_face(result.face_landmarks)
+                selected_face = choose_stable_face(result.face_landmarks, previous_eye)
 
                 if selected_face is not None:
                     selected_face = remap_landmarks_from_roi(selected_face, roi_info)
@@ -311,20 +342,22 @@ def process_video(args: argparse.Namespace) -> dict[str, Any]:
                         "x": clamp01((left_eye["x"] + right_eye["x"]) / 2.0),
                         "y": clamp01((left_eye["y"] + right_eye["y"]) / 2.0),
                     }
+                    previous_eye = dict(eye_center)
                     raw_target = {
                         "x": eye_center["x"],
                         "y": clamp01(eye_center["y"] + args.eye_y_offset),
                         "zoom": raw_zoom,
                     }
                     last_valid_raw = raw_target
-                    last_valid_time = time_sec
                     found += 1
+                elif last_valid_raw is not None:
+                    # Hold the last valid position indefinitely instead of
+                    # snapping to the frame center: the camera trajectory
+                    # keeps the shot still and glides back on recovery.
+                    raw_target = dict(last_valid_raw)
+                    raw_target["zoom"] = raw_zoom
                 else:
-                    if last_valid_raw is not None and last_valid_time is not None and (time_sec - last_valid_time) <= LOST_FACE_HOLD_SECONDS:
-                        raw_target = dict(last_valid_raw)
-                        raw_target["zoom"] = raw_zoom
-                    else:
-                        raw_target = dict(CENTER_FALLBACK)
+                    raw_target = dict(CENTER_FALLBACK)
 
                 smoothed_target = smooth_target(previous_smoothed, raw_target, args.smooth_alpha)
                 previous_smoothed = smoothed_target
