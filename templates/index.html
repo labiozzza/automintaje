@@ -1,0 +1,3951 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/static/icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+<title>Transcriber</title>
+<style>
+@font-face { font-family: 'ComfortaaPreview'; src: url('/font-assets/Comfortaa.ttf') format('truetype'); font-display: swap; }
+:root {
+  --bg: #0a0a0f;
+  --surface: #12121a;
+  --surface2: #1a1a25;
+  --border: #2a2a3a;
+  --text: #e8e8f0;
+  --text2: #8888a0;
+  --accent: #6c5ce7;
+  --accent2: #a29bfe;
+  --green: #00b894;
+  --red: #e17055;
+  --yellow: #fdcb6e;
+  --radius: 12px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { -webkit-text-size-adjust: 100%; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+.container { max-width: 900px; margin: 0 auto; padding: 24px; }
+
+h1 {
+  text-align: center;
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  background: linear-gradient(135deg, var(--accent2), var(--accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.subtitle { text-align: center; color: var(--text2); margin-bottom: 32px; font-size: 14px; }
+
+.view-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+.view-tab {
+  padding: 10px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text2);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.view-tab:hover { border-color: var(--accent); color: var(--text); }
+.view-tab.active {
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: #fff;
+  border-color: transparent;
+}
+.view { display: none; }
+.view.active { display: block; }
+
+.montage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+.badge.ok { background: rgba(0,184,148,0.15); color: var(--green); }
+.badge.no { background: rgba(225,112,85,0.15); color: var(--red); }
+.badge.warn { background: rgba(232,163,61,0.15); color: #e8a33d; }
+.badge.up { background: rgba(167,139,250,0.15); color: var(--accent2); }
+.badge-link { background: rgba(167,139,250,0.15); color: var(--accent2); border: 1px solid rgba(167,139,250,0.4); border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 700; cursor: pointer; margin-right: 4px; }
+.badge-link:hover { background: rgba(167,139,250,0.3); }
+.montage-status-row {
+  display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center;
+  font-size: 13px; color: var(--text2); margin-bottom: 8px;
+}
+.montage-status-row .badge { margin-right: 4px; }
+.target-row {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  padding: 10px; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; margin-bottom: 8px;
+}
+.target-row input[type="text"], .target-row textarea { flex: 1; min-width: 180px; }
+.publish-results { margin-top: 12px; }
+.publish-results .badge { margin-right: 6px; }
+.publish-results a { overflow-wrap: anywhere; word-break: break-word; }
+.publish-modal {
+  position: fixed; inset: 0; z-index: 1000; display: none;
+  align-items: center; justify-content: center; padding: 20px;
+  background: rgba(3, 6, 12, .82); backdrop-filter: blur(8px);
+}
+.publish-modal.active { display: flex; }
+.publish-dialog {
+  width: min(720px, 100%); max-height: calc(100vh - 40px); overflow: auto;
+  padding: 24px; border: 1px solid var(--border); border-radius: 14px;
+  background: var(--surface); box-shadow: 0 24px 80px rgba(0,0,0,.5);
+}
+.publish-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.publish-dialog-head h2 { margin: 0; font-size: 20px; }
+.publish-close { border: 0; background: transparent; color: var(--text2); font-size: 26px; cursor: pointer; }
+.publish-target-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 18px; }
+.publish-target {
+  display: flex; gap: 10px; align-items: center; padding: 11px 12px;
+  border: 1px solid var(--border); border-radius: 9px; background: var(--surface2);
+}
+.publish-target input { accent-color: var(--accent); }
+.publish-field { margin-top: 14px; }
+.publish-field-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; font-size: 12px; color: var(--text2); }
+.publish-field input, .publish-field textarea {
+  width: 100%; box-sizing: border-box; padding: 11px; color: var(--text);
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+}
+.publish-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.publish-live-progress { display: grid; gap: 9px; margin-top: 16px; }
+.publish-live-item { padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface2); }
+.publish-live-head { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; margin-bottom: 7px; }
+.publish-live-track { height: 6px; overflow: hidden; border-radius: 4px; background: rgba(255,255,255,.08); }
+.publish-live-fill { height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg,var(--accent),var(--accent2)); transition: width .3s ease; }
+.publish-live-item.done .publish-live-fill { background: var(--green); }
+.publish-live-item.error .publish-live-fill { background: var(--red); }
+.publish-live-fill.ind { width: 40%; background: repeating-linear-gradient(45deg, rgba(255,255,255,.22) 0 8px, transparent 8px 16px), linear-gradient(90deg,var(--accent),var(--accent2)); animation: opsIndeterminate 1.2s linear infinite; }
+.publish-live-detail { margin-top: 6px; color: var(--text2); font-size: 11px; overflow-wrap: anywhere; }
+.cover-status { margin-top: 14px; color: var(--text2); font-size: 12px; }
+.cover-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.cover-card { position: relative; aspect-ratio: 9/16; overflow: hidden; cursor: zoom-in; border: 2px solid transparent; border-radius: 10px; background: #080a0f; }
+.cover-card.selected { border-color: var(--accent2); box-shadow: 0 0 0 2px rgba(167,139,250,.22); }
+.cover-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.publish-field input.cover-check {
+  position: absolute; top: 10px; right: 10px; z-index: 2;
+  width: 30px; height: 30px; margin: 0; padding: 0; box-sizing: border-box;
+  appearance: none; -webkit-appearance: none; cursor: pointer;
+  border: 2px solid rgba(255,255,255,.86); border-radius: 50%;
+  background: rgba(8,10,15,.72); box-shadow: 0 3px 12px rgba(0,0,0,.38);
+  transition: border-color .18s ease, background-color .18s ease, transform .18s ease;
+}
+.cover-check:hover { transform: scale(1.06); border-color: #fff; }
+.cover-check:checked {
+  border-color: var(--accent2); background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round' d='m5 12 4 4L19 7'/%3E%3C/svg%3E");
+  background-position: center; background-repeat: no-repeat; background-size: 19px;
+}
+.cover-check:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(167,139,250,.45), 0 3px 12px rgba(0,0,0,.38); }
+.cover-name { position: absolute; left: 0; right: 0; bottom: 0; padding: 18px 8px 7px; color: #fff; font-size: 11px; background: linear-gradient(transparent,rgba(0,0,0,.8)); }
+.cover-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+.cover-zoom { position: fixed; inset: 0; z-index: 1100; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(0,0,0,.92); }
+.cover-zoom.active { display: flex; }
+.cover-zoom img { max-width: min(92vw,540px); max-height: 92vh; border-radius: 12px; }
+@media (max-width: 620px) { .cover-tools { grid-template-columns: 1fr; } }
+@media (max-width: 620px) { .publish-target-grid { grid-template-columns: 1fr; } }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin-bottom: 16px;
+}
+
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 16px;
+}
+
+/* Upload zone */
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 48px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+.upload-zone:hover, .upload-zone.dragover {
+  border-color: var(--accent);
+  background: rgba(108, 92, 231, 0.05);
+}
+.upload-zone.has-file {
+  border-color: var(--green);
+  border-style: solid;
+}
+
+.upload-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.5; }
+.upload-text { color: var(--text2); font-size: 14px; }
+.upload-filename {
+  color: var(--green);
+  font-weight: 600;
+  font-size: 16px;
+  margin-top: 8px;
+}
+.upload-input { display: none; }
+
+/* Settings grid */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.setting-group label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+select, input[type="number"] {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+select:focus, input:focus {
+  border-color: var(--accent);
+}
+
+select option { background: var(--surface2); }
+
+/* Toggle */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.toggle-row:last-child { border-bottom: none; }
+.toggle-row > div:first-child { min-width: 0; }
+
+.toggle-label { font-size: 14px; font-weight: 600; }
+.toggle-desc { margin-top: 2px; font-size: 12px; line-height: 1.4; color: var(--text2); }
+
+.toggle {
+  position: relative; display: inline-block; flex: 0 0 54px;
+  width: 54px;
+  height: 30px;
+  cursor: pointer;
+}
+
+.toggle input {
+  position: absolute; inset: 0; z-index: 2;
+  width: 100%; height: 100%; margin: 0; opacity: 0; pointer-events: none;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  background: linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.025));
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,.3);
+  transition: background .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+
+.toggle-slider::after {
+  content: '';
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #d7d8df;
+  top: 2px;
+  left: 2px;
+  box-shadow: 0 2px 6px rgba(0,0,0,.38);
+  transition: transform .22s cubic-bezier(.2,.8,.2,1), background .2s ease;
+}
+
+.toggle input:checked + .toggle-slider {
+  background: linear-gradient(135deg,var(--accent),var(--accent2));
+  border-color: rgba(255,255,255,.2);
+  box-shadow: inset 0 1px 1px rgba(255,255,255,.2), 0 0 0 1px rgba(108,92,231,.12);
+}
+
+.toggle input:checked + .toggle-slider::after {
+  transform: translateX(24px);
+  background: white;
+}
+.toggle:hover .toggle-slider { border-color: rgba(167,139,250,.55); }
+.toggle input:focus-visible + .toggle-slider { box-shadow: 0 0 0 3px rgba(167,139,250,.3); }
+.toggle input:disabled { cursor: not-allowed; }
+.toggle input:disabled + .toggle-slider { opacity: .48; }
+
+/* Speaker count */
+.speaker-count-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.speaker-count-row input[type="number"] {
+  width: 80px;
+  text-align: center;
+}
+
+/* Button */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 100%;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: white;
+}
+
+.btn-primary:hover { background: var(--accent2); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-sm {
+  padding: 8px 16px;
+  font-size: 12px;
+  width: auto;
+}
+
+/* Progress */
+.progress-container { display: none; }
+.progress-container.active { display: block; }
+
+.progress-bar-wrapper {
+  background: var(--surface2);
+  border-radius: 8px;
+  height: 8px;
+  overflow: hidden;
+  margin: 12px 0;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  border-radius: 8px;
+  transition: width 0.3s ease;
+  width: 0%;
+}
+
+.progress-stage {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.progress-detail {
+  font-size: 12px;
+  color: var(--text2);
+}
+
+.progress-percent {
+  font-size: 12px;
+  color: var(--accent2);
+  float: right;
+}
+
+/* Unified collapsible operations component */
+.ops-main { display: block; }
+.ops-main-head { display: flex; align-items: center; gap: 10px; }
+.ops-main-title { font-size: 15px; }
+.ops-main-percent { margin-left: auto; font-size: 13px; color: var(--accent2); }
+.ops-main-bar { margin: 10px 0 6px; }
+.ops-main-bar.indeterminate .progress-bar {
+  width: 40% !important;
+  position: relative;
+  animation: opsIndeterminate 1.2s linear infinite;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+}
+@keyframes opsIndeterminate { from { margin-left: -40%; } to { margin-left: 100%; } }
+.ops-main-detail { min-height: 16px; }
+.ops-toggle {
+  margin-top: 10px; background: none; border: none; padding: 4px 0; cursor: pointer;
+  color: var(--accent2); font-size: 13px; font-family: inherit; text-align: left;
+}
+.ops-toggle:hover { text-decoration: underline; }
+.ops-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.ops-body.closed { display: none; }
+.ops-op { border: 1px solid var(--border); background: var(--surface2); border-radius: 9px; padding: 10px; margin-top: 10px; }
+.ops-op-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.ops-op-bar-wrap { background: rgba(0,0,0,.35); border-radius: 6px; height: 6px; overflow: hidden; margin-top: 8px; position: relative; }
+.ops-op-bar { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 6px; transition: width .3s ease; width: 0%; }
+.ops-op-bar.ind { width: 40%; position: absolute; animation: opsIndeterminate 1.2s linear infinite; }
+.ops-op-warn { color: #f0b429; }
+.ops-op-error { color: var(--red); }
+.ops-stage { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--text2); }
+.ops-stage .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--border); }
+.ops-stage .dot.running { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.ops-stage .dot.done { background: var(--green); }
+.ops-stage .dot.fail { background: var(--red); }
+.ops-stage .dot.warn { background: #f0b429; }
+.ops-stage .dot.skip { background: var(--text2); opacity: .5; }
+.ops-stage-bar { flex: 1; background: rgba(0,0,0,.35); border-radius: 4px; height: 4px; overflow: hidden; position: relative; }
+.ops-stage-bar i { display: block; height: 100%; background: var(--accent); transition: width .3s ease; }
+.ops-stage-bar i.ind { width: 40%; position: absolute; animation: opsIndeterminate 1.2s linear infinite; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+.ops-fold-toggle {
+  margin-top: 6px; background: none; border: none; padding: 2px 0; cursor: pointer;
+  color: var(--accent2); font-size: 12px; font-family: inherit; text-align: left;
+}
+.ops-fold-toggle:hover { text-decoration: underline; }
+.ops-fold-toggle .ops-caret { display: inline-block; width: 12px; transition: transform .15s ease; }
+.ops-fold.closed > .ops-fold-toggle .ops-caret { transform: rotate(-90deg); }
+.ops-fold.closed > .ops-fold-body { display: none; }
+.ops-fold-body { margin: 4px 0 8px 14px; }
+
+/* Montage sections (ordered workflow) */
+.montage-section { display: flex; flex-direction: column; gap: 14px; margin-bottom: 22px; }
+.section-eyebrow {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 700; letter-spacing: .02em;
+  color: var(--text2); text-transform: uppercase; margin: 2px 0 0;
+}
+.section-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; flex: none; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: 12px; font-weight: 700;
+}
+.dependency-note {
+  margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+  background: var(--surface2); border: 1px solid var(--border);
+  font-size: 12px; color: var(--text2); line-height: 1.45;
+}
+.dependency-note.active { border-color: var(--accent); color: var(--text); }
+
+/* Stage icons */
+.stage-icon { margin-right: 6px; }
+
+/* Results */
+.results-container { display: none; }
+.results-container.active { display: block; }
+
+.result-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  background: var(--surface2);
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.result-tab {
+  flex: 1;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text2);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.result-tab.active {
+  background: var(--accent);
+  color: white;
+}
+
+.result-display {
+  background: var(--surface2);
+  border-radius: 8px;
+  padding: 20px;
+  max-height: 500px;
+  overflow-y: auto;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.result-display::-webkit-scrollbar { width: 6px; }
+.result-display::-webkit-scrollbar-track { background: transparent; }
+.result-display::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.transcript-segment-text {
+  display: inline-block;
+  min-width: 1ch;
+  border-radius: 4px;
+  padding: 0 3px;
+  margin: 0 -3px;
+  cursor: text;
+}
+
+.transcript-segment-text:hover { background: rgba(108, 92, 231, 0.08); }
+.transcript-segment-text:focus {
+  background: rgba(108, 92, 231, 0.14);
+  outline: 1px solid var(--accent);
+}
+
+.transcript-save-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.transcript-save-status { color: var(--text2); font-size: 12px; }
+
+.speaker-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-right: 6px;
+  text-transform: uppercase;
+}
+
+.speaker-0 { background: rgba(108, 92, 231, 0.2); color: var(--accent2); }
+.speaker-1 { background: rgba(0, 184, 148, 0.2); color: var(--green); }
+.speaker-2 { background: rgba(225, 112, 85, 0.2); color: var(--red); }
+.speaker-3 { background: rgba(253, 203, 110, 0.2); color: var(--yellow); }
+.speaker-4 { background: rgba(162, 155, 254, 0.2); color: #a29bfe; }
+.speaker-5 { background: rgba(85, 239, 196, 0.2); color: #55efc4; }
+
+.timecode {
+  color: var(--text2);
+  font-size: 11px;
+  margin-right: 8px;
+  user-select: none;
+}
+
+.dialogue-separator {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+/* Export buttons */
+.export-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.export-btn {
+  padding: 8px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-weight: 500;
+}
+
+.export-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent2);
+}
+
+/* Video stage (phone preview) */
+.video-stage {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  aspect-ratio: 9 / 16;
+  background: #050607;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 0 auto 12px;
+}
+.video-stage video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #050607;
+  object-fit: contain;
+}
+
+/* CapCut-style subtitle overlay on the preview */
+.sub-drag-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 7;
+  pointer-events: none;
+}
+.sub-drag-layer .sub-card {
+  position: absolute;
+  left: 50%;
+  top: 78%;
+  transform: translateY(-50%);
+  max-width: 76%;
+  padding: 10px 18px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.53);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.12);
+  border-left: 3px solid rgba(0,230,118,.9);
+  color: #fff;
+  text-align: center;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+  will-change: transform, font-size;
+}
+.sub-drag-layer .sub-card.no-box { background: transparent; box-shadow: 0 0 0 1px rgba(0,230,118,.4); }
+.sub-drag-layer .sub-card:active {
+  cursor: grabbing;
+  box-shadow: 0 0 0 3px rgba(0,230,118,.55), 0 0 0 1px rgba(255,255,255,.2);
+}
+.sub-drag-layer .sub-card.roaming {
+  box-shadow: 0 0 0 3px rgba(0,230,118,.55), 0 0 0 1px rgba(255,255,255,.2);
+}
+.sub-drag-layer .sub-card-text {
+  display: block;
+  font-size: calc(18px * var(--sub-scale, 1));
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: .2px;
+  text-shadow: 0 1px 2px rgba(0,0,0,.6);
+  -webkit-text-stroke: 1px rgba(0,0,0,.85);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.sub-drag-layer .sub-card-hint {
+  display: block;
+  font-size: 10px;
+  color: rgba(255,255,255,.55);
+  letter-spacing: .4px;
+  text-transform: uppercase;
+}
+.sub-drag-tip {
+  position: absolute;
+  left: 50%;
+  top: 4%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: #fff;
+  background: rgba(0,0,0,.45);
+  padding: 3px 10px;
+  border-radius: 12px;
+  letter-spacing: .3px;
+  pointer-events: none;
+  max-width: calc(100% - 16px);
+  box-sizing: border-box;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.3;
+}
+
+/* Keybar (zoom / segment timeline) */
+.keybar {
+  position: relative;
+  height: 42px;
+  margin: 8px 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface2);
+  overflow: hidden;
+  cursor: pointer;
+}
+.keybar-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  transform: translateX(-1px);
+  pointer-events: none;
+  transition: left 0.12s linear;
+}
+.keybar-marker {
+  position: absolute;
+  top: 5px;
+  width: 9px;
+  height: 30px;
+  border-radius: 5px;
+  transform: translateX(-4px);
+  background: var(--yellow);
+  border: 1px solid #3a2f13;
+  pointer-events: none;
+}
+.keybar-marker.word { background: var(--accent2); border-color: #2a2050; }
+.keybar-marker.active { background: var(--accent); border-color: #1d5b4e; }
+.keybar-marker.anim { background: #FFD54F; border-color: #755c00; }
+.overlay-preview-layer { position:absolute; inset:0; z-index:6; pointer-events:none; overflow:hidden; }
+.timeline-animation-preview {
+  display:none; position:absolute; left:10%; right:10%; bottom:8px; height:48px;
+  pointer-events:none; z-index:5;
+}
+.timeline-animation-preview.active { display:block; }
+.timeline-animation-item { position:absolute; left:0; bottom:0; width:36px; height:auto; transform:translateX(-50%); }
+.overlay-preview-item {
+  position:absolute; transform:translate(-50%,-50%); pointer-events:auto;
+  touch-action:none; user-select:none; cursor:grab; filter:drop-shadow(0 3px 8px rgba(0,0,0,.45));
+}
+.overlay-preview-item img { display:block; width:100%; height:100%; pointer-events:none; user-select:none; -webkit-user-drag:none; }
+.overlay-preview-item svg { display:block; width:100%; height:100%; pointer-events:none; overflow:visible; }
+.overlay-preview-item:active { cursor:grabbing; }
+.overlay-preview-item.selected { outline:2px solid var(--accent2); outline-offset:4px; border-radius:4px; }
+.overlay-resize-handle { display:none; position:absolute; z-index:3; width:16px; height:16px; }
+.overlay-preview-item.selected .overlay-resize-handle { display:block; }
+.overlay-resize-handle.nw { left:-8px; top:-8px; border-left:3px solid #fff; border-top:3px solid #fff; cursor:nwse-resize; }
+.overlay-resize-handle.ne { right:-8px; top:-8px; border-right:3px solid #fff; border-top:3px solid #fff; cursor:nesw-resize; }
+.overlay-resize-handle.sw { left:-8px; bottom:-8px; border-left:3px solid #fff; border-bottom:3px solid #fff; cursor:nesw-resize; }
+.overlay-resize-handle.se { right:-8px; bottom:-8px; border-right:3px solid #fff; border-bottom:3px solid #fff; cursor:nwse-resize; }
+@media (pointer:coarse) {
+  .overlay-resize-handle, .overlay-preview-item.selected .overlay-resize-handle { display:none; }
+}
+.overlay-inspector { display:none; margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
+.overlay-inspector.active { display:block; }
+.overlay-inspector-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.overlay-inspector-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.overlay-position { margin-top:10px; color:var(--text2); font-size:12px; font-family:ui-monospace,monospace; }
+.overlay-trash {
+  position:absolute; left:50%; bottom:16px; z-index:20; display:flex; align-items:center; gap:8px;
+  padding:10px 16px; color:#fff; background:rgba(15,17,24,.9); border:1px solid rgba(255,255,255,.25);
+  border-radius:999px; opacity:0; transform:translate(-50%,18px) scale(.92); pointer-events:none;
+  transition:opacity .16s ease,transform .16s ease,background .16s ease,border-color .16s ease;
+}
+.overlay-trash.active { opacity:1; transform:translate(-50%,0) scale(1); }
+.overlay-trash.armed { background:rgba(225,112,85,.95); border-color:#ffb8b0; transform:translate(-50%,0) scale(1.06); }
+.overlay-timeline-wrap { position:relative; }
+.btn-small { padding:4px 8px; font-size:11px; }
+.overlay-timeline {
+  position:relative; min-height:44px; margin:8px 0 4px; padding:4px 0;
+  overflow:hidden; border:1px solid var(--border); border-radius:8px;
+  background:repeating-linear-gradient(90deg,var(--surface2) 0,var(--surface2) calc(10% - 1px),rgba(255,255,255,.055) 10%);
+  touch-action:none; cursor:pointer;
+}
+.overlay-add-button {
+  position:absolute; right:6px; top:6px; z-index:20; width:30px; height:30px; padding:0;
+  border:1px solid rgba(255,255,255,.35); border-radius:50%; color:#fff;
+  background:linear-gradient(135deg,var(--accent),var(--accent2)); box-shadow:0 3px 10px rgba(0,0,0,.35);
+  font-size:22px; line-height:28px; cursor:pointer;
+}
+.overlay-timeline-empty { padding:9px 12px; color:var(--text2); font-size:12px; text-align:center; }
+.overlay-timeline-caption { height:34px; padding:8px 44px 0 12px; color:var(--text2); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; }
+.overlay-clip {
+  position:absolute; height:30px; min-width:12px; border:1px solid rgba(255,255,255,.22); border-radius:7px;
+  background:linear-gradient(135deg,rgba(108,92,231,.9),rgba(167,139,250,.78));
+  box-shadow:0 2px 7px rgba(0,0,0,.28); color:white; cursor:grab; overflow:hidden;
+}
+.overlay-clip.selected { box-shadow:0 0 0 2px rgba(255,255,255,.85),0 3px 10px rgba(0,0,0,.35); }
+.overlay-clip-label { display:block; padding:6px 13px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:11px; font-weight:700; pointer-events:none; }
+.overlay-clip-handle { position:absolute; top:0; bottom:0; width:10px; background:rgba(255,255,255,.2); cursor:ew-resize; }
+.overlay-clip-handle.left { left:0; border-right:1px solid rgba(255,255,255,.32); }
+.overlay-clip-handle.right { right:0; border-left:1px solid rgba(255,255,255,.32); }
+.overlay-timeline-playhead { position:absolute; top:0; bottom:0; z-index:10; width:2px; background:#fff; box-shadow:0 0 5px rgba(255,255,255,.7); pointer-events:none; }
+@media (max-width:620px) {
+  .overlay-inspector-grid { grid-template-columns:1fr 1fr; }
+  .overlay-inspector-grid .setting-group:last-child { grid-column:1 / -1; }
+}
+.animation-frame-list { display:flex; gap:10px; flex-wrap:wrap; min-height:96px; padding:12px; border:1px dashed var(--border); border-radius:10px; }
+.animation-frame { width:82px; padding:6px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); cursor:grab; text-align:center; }
+.animation-frame img { width:68px; height:68px; object-fit:contain; display:block; }
+.animation-frame.dragging { opacity:.35; }
+.timebar-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text2);
+  margin-bottom: 8px;
+  font-family: ui-monospace, monospace;
+}
+
+/* Project row */
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+}
+.project-row.selected {
+  border-color: var(--accent);
+  background: var(--surface2);
+}
+.project-row .actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.project-row .meta {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Use-in-montage CTA */
+.cta-btn {
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.cta-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Error */
+.error-box {
+  background: rgba(225, 112, 85, 0.1);
+  border: 1px solid rgba(225, 112, 85, 0.3);
+  border-radius: 8px;
+  padding: 16px;
+  color: var(--red);
+  font-size: 13px;
+  display: none;
+}
+.error-box.active { display: block; }
+
+/* API info */
+.api-info { font-size: 12px; color: var(--text2); margin-top: 8px; }
+.api-info code {
+  background: var(--surface2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  .settings-grid { grid-template-columns: 1fr; }
+  .export-bar { flex-direction: column; }
+  .export-btn { width: 100%; text-align: center; }
+
+  .project-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .project-row .actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  .project-row .actions .btn { flex: 1; }
+  .card { padding: 16px; }
+  .video-stage { max-width: 340px; }
+  .view-tab { padding: 8px 12px; font-size: 13px; }
+  .montage-section { margin-bottom: 16px; }
+  .section-eyebrow { font-size: 12px; }
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Transcriber</h1>
+  <p class="subtitle">Транскрибация и автомонтаж вертикальных роликов</p>
+
+  <div class="view-tabs">
+    <button class="view-tab active" data-view="transcribe" onclick="switchView('transcribe')">Транскрибация</button>
+    <button class="view-tab" data-view="montage" onclick="switchView('montage')">Автомонтаж</button>
+    <button class="view-tab" data-view="animations" onclick="switchView('animations')">Анимации</button>
+  </div>
+
+  <!-- ======== ТАБ 1: ТРАНСКРИБАЦИЯ ======== -->
+  <div id="viewTranscribe" class="view active">
+
+  <!-- Upload -->
+  <div class="card">
+    <div class="card-title">Файл</div>
+    <div class="upload-zone" id="uploadZone">
+      <input type="file" id="fileInput" accept="audio/*,video/*,.mp3,.mp4,.wav,.ogg,.flac,.m4a,.mkv,.avi,.webm">
+      <div class="upload-icon">📁</div>
+      <div class="upload-text">Перетащите файл сюда или нажмите для выбора</div>
+      <div class="upload-filename" id="fileName"></div>
+    </div>
+    <div class="api-info" id="apiInfo" style="display:none">
+      API: <code>POST /api/upload</code> → <code>POST /api/transcribe/{job_id}</code> → <code>GET /api/result/{job_id}</code>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="card" id="settingsCard" style="display:none">
+    <div class="card-title">Настройки</div>
+    <div class="settings-grid">
+      <div class="setting-group">
+        <label>Модель Whisper</label>
+        <select id="modelSelect">
+          <option value="tiny">tiny (быстро, ~1GB RAM)</option>
+          <option value="base">base (нормально, ~1GB RAM)</option>
+          <option value="small" selected>small (хорошо, ~2GB RAM)</option>
+          <option value="medium">medium (отлично, ~5GB RAM)</option>
+        </select>
+      </div>
+      <div class="setting-group">
+        <label>Язык</label>
+        <select id="languageSelect">
+          <option value="ru" selected>Русский</option>
+          <option value="en">English</option>
+          <option value="auto">Авто-определение</option>
+          <option value="uk">Українська</option>
+          <option value="de">Deutsch</option>
+          <option value="fr">Français</option>
+          <option value="es">Español</option>
+          <option value="zh">中文</option>
+          <option value="ja">日本語</option>
+        </select>
+      </div>
+      <div class="setting-group">
+        <label>Режим транскрибации</label>
+        <select id="modeSelect">
+          <option value="sentences">По предложениям</option>
+          <option value="words" selected>По словам</option>
+        </select>
+      </div>
+      <div class="setting-group">
+        <label>&nbsp;</label>
+        <button class="btn btn-primary" id="startBtn" disabled onclick="startTranscription()">
+          Начать транскрибацию
+        </button>
+      </div>
+    </div>
+
+    <!-- Toggles -->
+    <div style="margin-top: 16px;">
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">Диаризация</div>
+          <div class="toggle-desc">Определение спикеров (кто говорит)</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="diarizationToggle" onchange="toggleDiarization()">
+          <div class="toggle-slider"></div>
+        </label>
+      </div>
+
+      <div id="speakerCountRow" style="display:none">
+        <div class="speaker-count-row">
+          <span class="toggle-label">Количество спикеров:</span>
+          <input type="number" id="numSpeakers" min="2" max="20" value="2" placeholder="авто">
+          <span class="toggle-desc">(оставьте пустым для авто-определения)</span>
+        </div>
+      </div>
+
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">Показывать тайм-коды</div>
+          <div class="toggle-desc">Отображать временные метки рядом с текстом</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="showTimecodes" checked onchange="refreshDisplay()">
+          <div class="toggle-slider"></div>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">Показывать спикеров</div>
+          <div class="toggle-desc">Отображать имена спикеров в тексте</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="showSpeakers" onchange="refreshDisplay()">
+          <div class="toggle-slider"></div>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="card progress-container" id="progressCard">
+    <div class="card-title">Прогресс</div>
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div class="progress-stage" id="progressStage">Подготовка...</div>
+      <span class="progress-percent" id="progressPercent">0%</span>
+    </div>
+    <div class="progress-bar-wrapper">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+    <div class="progress-detail" id="progressDetail"></div>
+  </div>
+
+  <!-- Error -->
+  <div class="error-box" id="errorBox"></div>
+
+  <!-- Results -->
+  <div class="results-container" id="resultsCard">
+    <div class="card">
+      <div class="card-title">Результат</div>
+
+      <div class="result-tabs">
+        <button class="result-tab active" onclick="switchTab('dialogue', this)">Диалог</button>
+        <button class="result-tab" onclick="switchTab('text', this)">Текст</button>
+        <button class="result-tab" onclick="switchTab('json', this)">JSON</button>
+      </div>
+
+      <div class="result-display" id="resultDisplay"></div>
+      <div class="transcript-save-bar">
+        <span class="transcript-save-status" id="transcriptSaveStatus">Нажмите на текст сегмента, чтобы изменить его</span>
+        <button class="btn btn-primary" id="saveTranscriptBtn" type="button" onclick="saveTranscript()" disabled>Сохранить</button>
+      </div>
+
+      <div class="export-bar">
+        <button class="export-btn" onclick="download('srt')">⬇ SRT</button>
+        <button class="export-btn" onclick="download('vtt')">⬇ VTT</button>
+        <button class="export-btn" onclick="download('txt')">⬇ TXT</button>
+        <button class="export-btn" onclick="download('json')">⬇ JSON</button>
+        <button class="export-btn" onclick="download('tsv')">⬇ TSV</button>
+        <button class="export-btn" onclick="download('dialogue')">⬇ Диалог</button>
+      </div>
+    </div>
+  </div>
+
+  </div> <!-- /viewTranscribe -->
+
+  <!-- ======== ТАБ 2: АВТОМОНТАЖ ======== -->
+  <div id="viewMontage" class="view">
+
+    <!-- ===== 1. Исходник и проект ===== -->
+    <section class="montage-section" aria-labelledby="secSource">
+      <h2 class="section-eyebrow" id="secSource"><span class="section-num">1</span> Исходник и проект</h2>
+
+      <!-- Status -->
+      <div class="card">
+        <div class="card-title">Система</div>
+        <div class="montage-status-row" id="montageStatusRow">Проверка...</div>
+        <div id="montageStatusDetail" style="font-size:13px;color:var(--text2)"></div>
+      </div>
+
+      <!-- Projects -->
+      <div class="card">
+        <div class="card-title">Проекты <span id="projectsCount" style="color:var(--text2)"></span></div>
+        <div id="projectsList" style="display:flex;flex-direction:column;gap:8px"></div>
+        <div style="margin-top:10px;font-size:12px;color:var(--text2)">
+          Проект создаётся автоматически после транскрибации загруженного видео. Выберите его, чтобы смонтировать без повторной загрузки файла.
+        </div>
+      </div>
+
+      <!-- Input -->
+      <div class="card">
+        <div class="card-title">Исходное видео и текст</div>
+        <div class="upload-zone" id="montageUploadZone">
+          <input type="file" id="montageFileInput" accept="video/*,.mp4,.mov,.mkv,.webm">
+          <div class="upload-icon">🎬</div>
+          <div class="upload-text">Видео (9:16) — перетащите или нажмите</div>
+          <div class="upload-filename" id="montageFileName"></div>
+        </div>
+        <div id="montageProjectSel" style="margin-top:10px;font-size:13px;color:var(--accent2);display:none">
+          Выбран проект: <b id="montageProjectName"></b>
+          <a href="javascript:void(0)" onclick="clearProject()" style="margin-left:8px;color:var(--text2)">✕ отменить</a>
+        </div>
+        <div style="margin-top:12px">
+          <label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:6px">
+            Текст: готовый SRT <em style="text-transform:none">(необязательно)</em>
+          </label>
+          <input type="file" id="montageSrtInput" accept=".srt,.txt" style="color:var(--text2)">
+        </div>
+        <div class="toggle-row" style="margin-top:12px">
+          <div>
+            <div class="toggle-label">Использовать транскрибацию</div>
+            <div class="toggle-desc" id="montageTranscriptInfo">Сначала транскрибируйте аудио на вкладке «Транскрибация»</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="montageUseTranscript" checked>
+            <div class="toggle-slider"></div>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 2. Предпросмотр и редактор ===== -->
+    <section class="montage-section" aria-labelledby="secPreview">
+      <h2 class="section-eyebrow" id="secPreview"><span class="section-num">2</span> Предпросмотр и редактор</h2>
+
+      <div class="results-container" id="projectPreviewCard">
+        <div class="card">
+          <div class="card-title">Превью проекта
+            <span style="margin-left:6px;font-size:12px;color:var(--text2)">перетаскивайте субтитры и выбранные наложения</span>
+          </div>
+          <div class="video-stage">
+            <video id="projectPreviewVideo" playsinline controls preload="metadata"></video>
+            <div class="timeline-animation-preview" id="timelineAnimationPreview"><img class="timeline-animation-item" alt="Кадр анимации таймлайна"></div>
+            <div class="overlay-preview-layer" id="overlayPreviewLayer"></div>
+            <div class="overlay-trash" id="overlayTrash" aria-hidden="true"><span>🗑</span><strong>Удалить наложение</strong></div>
+            <div class="sub-drag-layer">
+              <div class="sub-drag-tip">Левая грань X <span id="projectPreviewSubX">0.12</span> • Y <span id="projectPreviewSubY">0.78</span> • Размер <span id="projectPreviewSubScale">1.00</span></div>
+              <div class="sub-card" id="projectPreviewSubCard"><span class="sub-card-text" id="projectPreviewSubText"></span></div>
+            </div>
+          </div>
+          <div class="timebar-scale">
+            <span id="projectPreviewCur">00:00.000</span>
+            <span id="projectPreviewDur">00:00.000</span>
+          </div>
+          <div class="keybar" id="projectPreviewKeybar">
+            <div id="projectPreviewMarkers"></div>
+            <div id="projectPreviewPlayhead" class="keybar-playhead"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 3. Настройки субтитров ===== -->
+    <section class="montage-section" aria-labelledby="secSubs">
+      <h2 class="section-eyebrow" id="secSubs"><span class="section-num">3</span> Настройки субтитров</h2>
+      <div class="card">
+        <div class="montage-grid">
+          <div class="setting-group">
+            <label>Субтитры</label>
+            <select id="montageSubtitleMode" onchange="updatePreviewSubtitleMode()">
+              <option value="sentences">По предложениям</option>
+              <option value="words" selected>По словам</option>
+              <option value="phrases">По фразам (2-5 слов)</option>
+            </select>
+          </div>
+          <div class="setting-group">
+            <label>Позиция субтитров</label>
+            <select id="montageSubtitlePosition">
+              <option value="custom" selected>Своя (перетаскиванием)</option>
+              <option value="bottom">Внизу</option>
+              <option value="center">По центру</option>
+              <option value="top">Вверху</option>
+            </select>
+            <input type="hidden" id="montageSubtitleX" value="0.12">
+            <input type="hidden" id="montageSubtitleY" value="0.78">
+            <input type="hidden" id="montageSubtitleScale" value="1.00">
+          </div>
+          <div class="setting-group">
+            <label>Шрифт субтитров</label>
+            <select id="montageSubtitleFont" onchange="updateSubtitlePreviewStyle()">
+              <option value="/Users/labiozzza/Projects/automontage/montage/fonts/Comfortaa.ttf">Comfortaa (встроен)</option>
+              <option value="/System/Library/Fonts/Helvetica.ttc">Системный (Helvetica)</option>
+            </select>
+          </div>
+          <div class="setting-group">
+            <label>Размер шрифта, px</label>
+            <input type="number" id="montageSubtitleFontSize" value="64" min="24" max="128" step="1" oninput="updateSubtitleFontSize(false)" onchange="updateSubtitleFontSize(true)">
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          <div class="toggle-row">
+            <div>
+              <div class="toggle-label">Фон-плашка за буквами</div>
+              <div class="toggle-desc">Выключите, чтобы оставить только буквы и обводку</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="montageSubtitleBox" onchange="updateSubtitlePreviewStyle()">
+              <div class="toggle-slider"></div>
+            </label>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 4. Зум и отслеживание лица ===== -->
+    <section class="montage-section" aria-labelledby="secZoom">
+      <h2 class="section-eyebrow" id="secZoom"><span class="section-num">4</span> Зум и отслеживание лица</h2>
+      <div class="card">
+        <div class="montage-grid">
+          <div class="setting-group">
+            <label>Режим краёв при зуме</label>
+            <select id="montageEdgeMode">
+              <option value="reflect">Отражение</option>
+              <option value="scale" selected>Масштаб</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-top:16px">
+          <div class="toggle-row">
+            <div>
+              <div class="toggle-label">Отслеживание лица</div>
+              <div class="toggle-desc">MediaPipe — анализ положения лица по кадрам</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="montageFaceTrack" onchange="updateAutozoomDependencyNote()">
+              <div class="toggle-slider"></div>
+            </label>
+          </div>
+          <div class="toggle-row">
+            <div>
+              <div class="toggle-label">Автозум</div>
+              <div class="toggle-desc">Умный зум по смыслу текста</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="montageAutozoom" onchange="updateAutozoomDependencyNote()">
+              <div class="toggle-slider"></div>
+            </label>
+          </div>
+          <div class="dependency-note" id="autozoomDependencyNote"></div>
+        </div>
+        <div style="margin-top:12px">
+          <div class="toggle-row">
+            <div>
+              <div class="toggle-label">Переопределить таймлайн автозума</div>
+              <div class="toggle-desc">JSON-список [{&quot;time&quot;: 0, &quot;percent&quot;: 0}, ...]; заменит умный таймлайн</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="montageZoomOverride" onclick="document.getElementById('montageZoomTimeline').style.display=this.checked?'block':'none'">
+              <div class="toggle-slider"></div>
+            </label>
+          </div>
+          <textarea id="montageZoomTimeline" rows="4" placeholder='[{"time": 0, "percent": 0}, {"time": 2, "percent": 45}, {"time": 5, "percent": 10}]' style="display:none;width:100%;margin-top:10px;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-family:ui-monospace,monospace;resize:vertical"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 5. Наложения и анимации ===== -->
+    <section class="montage-section" aria-labelledby="secOverlays">
+      <h2 class="section-eyebrow" id="secOverlays"><span class="section-num">5</span> Наложения и анимации</h2>
+
+      <div class="results-container" id="overlaysCard">
+        <div class="card">
+          <div class="card-title">Наложения на видео</div>
+          <div class="overlay-timeline-wrap">
+            <div class="overlay-timeline" id="overlayTimeline"><div class="overlay-timeline-empty">Добавьте картинку кнопкой +</div></div>
+            <input id="montageOverlayUpload" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden onchange="handleOverlayUpload(this.files)">
+          </div>
+          <div class="overlay-inspector" id="overlayInspector">
+            <div class="overlay-inspector-head"><strong id="overlayInspectorName">Наложение</strong></div>
+            <div class="overlay-inspector-grid">
+              <div class="setting-group"><label>Начало, сек</label><input type="number" id="overlayStart" min="0" step="0.05" oninput="updateSelectedOverlayFromInputs()"></div>
+              <div class="setting-group"><label>Конец, сек</label><input type="number" id="overlayEnd" min="0.05" step="0.05" oninput="updateSelectedOverlayFromInputs()"></div>
+              <div class="setting-group"><label>Размер, px</label><input type="number" id="overlaySize" min="20" max="1200" step="10" oninput="updateSelectedOverlayFromInputs()"></div>
+            </div>
+            <div class="overlay-position" id="overlayPosition">X 0.50 · Y 0.50 · слой 1</div>
+          </div>
+        </div>
+
+
+        <div class="card">
+          <div class="card-title">Анимация таймлайна</div>
+          <div class="montage-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr))">
+            <div class="setting-group">
+              <label>Анимация таймлайна</label>
+              <select id="montageAnimationId" onchange="updateAnimationPreview()"><option value="">Без анимации</option></select>
+            </div>
+            <div class="setting-group">
+              <label>Появляется через, сек</label>
+              <input type="number" id="montageAnimationStart" value="0" min="0" step="0.1" oninput="syncAnimationPreview()">
+            </div>
+            <div class="setting-group">
+              <label>Смещение по X, px</label>
+              <input type="number" id="montageAnimationOffset" value="0" min="-200" max="200" step="1" oninput="syncAnimationPreview()">
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 6. Дополнительные настройки ===== -->
+    <section class="montage-section" aria-labelledby="secExtra">
+      <h2 class="section-eyebrow" id="secExtra"><span class="section-num">6</span> Дополнительные настройки</h2>
+      <div class="card">
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Создать отражённую версию</div>
+            <div class="toggle-desc">Дополнительный ролик с отражённым по горизонтали видео (субтитры и наложения не отражаются). Основной ролик всегда без отражения. Отражённая версия и файлы для публикации готовятся автоматически в рамках монтажа. Если выключено, перевёрнутые цели публикации недоступны.</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="montagePrepareMirrored">
+            <div class="toggle-slider"></div>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Предложить обложку</div>
+            <div class="toggle-desc">BigPickle придумает 4 заголовка, изображения соберутся локально; ручной заголовок добавит пятый вариант</div>
+            <input id="montageAutoCoverTitle" maxlength="100" placeholder="Свой заголовок для пятой обложки (необязательно)" style="margin-top:8px">
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="montageProposeCover">
+            <div class="toggle-slider"></div>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Умная подсветка (BigPickle)</div>
+            <div class="toggle-desc" id="montageBigpickleDesc">Цвета слов по смыслу, нужен интернет</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="montageBigpickle" checked>
+            <div class="toggle-slider"></div>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Заглушить нежелательные слова</div>
+            <div class="toggle-desc">Середина произнесённого слова заменяется тишиной; текст субтитров не размывается</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="montageBlurBannedWords">
+            <div class="toggle-slider"></div>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 7. Обработка и прогресс ===== -->
+    <section class="montage-section" aria-labelledby="secProcess">
+      <h2 class="section-eyebrow" id="secProcess"><span class="section-num">7</span> Обработка и прогресс</h2>
+      <div class="card">
+        <button class="btn btn-primary" id="montageStartBtn" disabled onclick="startMontage()">Запустить монтаж</button>
+      </div>
+
+      <!-- Montage progress: unified collapsible operations component -->
+      <div class="card progress-container active" id="montageProgressCard">
+        <div class="ops-main">
+          <div class="ops-main-head">
+            <strong class="ops-main-title" id="operationTitle">Операции</strong>
+            <span class="ops-main-percent" id="operationPercent">0%</span>
+          </div>
+          <div class="progress-bar-wrapper ops-main-bar" id="operationMainBarWrap">
+            <div class="progress-bar" id="operationMainBar"></div>
+          </div>
+          <div class="ops-main-detail progress-detail" id="operationDetail">Ожидание...</div>
+          <button type="button" class="ops-toggle" id="operationToggle" aria-expanded="true"
+                  aria-controls="operationsBody" onclick="toggleOperationsBody()">
+            <span id="operationToggleLabel">Скрыть подробности</span>
+          </button>
+        </div>
+        <div class="ops-body" id="operationsBody"></div>
+        <div class="progress-detail" id="montageLog" style="max-height:140px;overflow:auto;white-space:pre-wrap;font-size:12px"></div>
+      </div>
+
+      <!-- Montage error -->
+      <div class="error-box" id="montageErrorBox"></div>
+    </section>
+
+    <!-- ===== 8. Готовый ролик и публикация ===== -->
+    <section class="montage-section" aria-labelledby="secResult">
+      <h2 class="section-eyebrow" id="secResult"><span class="section-num">8</span> Готовый ролик и публикация</h2>
+
+      <div class="results-container" id="montageResultsCard">
+        <div class="card">
+          <div class="card-title">Готовый ролик</div>
+          <div class="montage-status-row">
+            <span id="montageResultInfo"></span>
+          </div>
+          <div class="video-stage" id="montageVideoStage" style="display:none">
+            <video id="montageVideo" playsinline controls preload="metadata"></video>
+            <div class="sub-drag-layer">
+              <div class="sub-drag-tip">Субтитры запечены в ролик. Чтобы изменить позицию/размер — вернитесь на превью проекта.</div>
+            </div>
+          </div>
+          <div class="timebar-scale" id="montageVideoTimebar" style="display:none">
+            <span id="montageVideoCur">00:00.000</span>
+            <span id="montageVideoDur">00:00.000</span>
+          </div>
+          <div class="keybar" id="montageVideoKeybar" style="display:none">
+            <div id="montageVideoMarkers"></div>
+            <div id="montageVideoPlayhead" class="keybar-playhead"></div>
+          </div>
+          <div class="export-bar">
+            <button class="export-btn" id="shareMontageBtn" onclick="shareMontage()">Поделиться / сохранить в галерею</button>
+          </div>
+
+          <div class="card-title" style="margin-top:20px">Таймлайн ролика</div>
+          <div id="montageTimelineInfo" style="font-size:13px;color:var(--text2)"></div>
+
+          <div class="card-title" style="margin-top:20px">Публикация</div>
+          <button class="btn btn-primary" id="openPublishWindowBtn" disabled onclick="openPublishWindow()">Открыть окно публикации</button>
+          <div class="publish-results" id="montagePublishResults"></div>
+
+          <div class="card-title" style="margin-top:20px">Подготовка к публикации</div>
+          <div id="montageMirrorVariantInfo" style="font-size:13px;color:var(--text2)">Отражённая версия: не подготовлена</div>
+          <div id="montagePrepareInfo" style="font-size:13px;color:var(--text2)">Готовится автоматически после монтажа</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="publish-modal" id="montagePublishModal" onclick="if(event.target===this) closePublishWindow()">
+      <div class="publish-dialog" role="dialog" aria-modal="true" aria-labelledby="publishDialogTitle">
+        <div class="publish-dialog-head">
+          <h2 id="publishDialogTitle">Публикация ролика</h2>
+          <button class="publish-close" type="button" aria-label="Закрыть" onclick="closePublishWindow()">×</button>
+        </div>
+        <div class="publish-target-grid">
+          <label class="publish-target"><input type="checkbox" class="publish-target-checkbox" value="instagram_trial"> Instagram пробное</label>
+          <label class="publish-target"><input type="checkbox" class="publish-target-checkbox publish-mirror-target" value="instagram_trial_mirrored"> Instagram пробное перевёрнутое</label>
+          <label class="publish-target"><input type="checkbox" class="publish-target-checkbox" value="instagram_feed"> Instagram основная лента</label>
+          <label class="publish-target"><input type="checkbox" class="publish-target-checkbox publish-mirror-target" value="instagram_feed_mirrored"> Instagram основная лента перевёрнутое</label>
+          <label class="publish-target"><input type="checkbox" class="publish-target-checkbox" value="youtube"> YouTube</label>
+          <label class="publish-target"><input type="checkbox" class="publish-target-checkbox publish-mirror-target" value="youtube_mirrored"> YouTube перевёрнутое</label>
+        </div>
+        <div class="error-box" id="montageMirrorPublishNotice" style="display:none"></div>
+        <div class="publish-field">
+          <div class="publish-field-head"><label for="montagePublishTitle">Заголовок для YouTube</label><span id="montagePublishTitleCount">0 / 119</span></div>
+          <input id="montagePublishTitle" maxlength="119" placeholder="Обязателен, если выбран YouTube" oninput="updatePublishCounts()">
+        </div>
+        <div class="publish-field">
+          <div class="publish-field-head"><label for="montagePublishText">Текст для Instagram</label><span id="montagePublishTextCount">0 / 2000</span></div>
+          <textarea id="montagePublishText" maxlength="2000" rows="6" placeholder="Подпись к публикации" oninput="updatePublishCounts()"></textarea>
+        </div>
+        <div class="publish-field">
+          <div class="publish-field-head"><span>Обложка</span><span>выберите одну</span></div>
+          <div class="cover-status" id="montageCoverStatus">Обложки не создавались</div>
+          <div class="cover-grid" id="montageCoverGrid"></div>
+          <div class="cover-tools">
+            <label class="btn" style="text-align:center;cursor:pointer">Загрузить свою<input id="montageCoverUpload" type="file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="uploadMontageCover()"></label>
+            <button class="btn" type="button" onclick="toggleStopFrameCover()">Выбрать стоп-кадр</button>
+          </div>
+          <div id="montageStopFrameTools" style="display:none;margin-top:12px">
+            <div class="publish-field-head"><label for="montageCoverTime">Стоп-кадр</label><span id="montageCoverTimeLabel">00:00.000</span></div>
+            <input id="montageCoverTime" type="range" min="0" max="1" step="0.1" value="0" oninput="previewCoverFrame()" style="width:100%">
+            <input id="montageCoverTitle" maxlength="100" placeholder="Название на обложке" style="margin-top:10px">
+            <button class="btn btn-primary" type="button" id="generateCoverBtn" style="margin-top:10px" onclick="generateStopFrameCover()">Создать локально</button>
+          </div>
+        </div>
+        <div class="toggle-desc" style="margin-top:12px">Порядок Instagram: пробное → пробное перевёрнутое → основная лента → основная лента перевёрнутое. YouTube публикуется параллельно.</div>
+        <div class="error-box" id="montagePublishError"></div>
+        <div class="publish-live-progress" id="montagePublishLiveProgress"></div>
+        <div class="publish-results" id="montagePublishModalResults"></div>
+        <div class="publish-actions">
+          <button class="btn" type="button" id="montageNewPublishBtn" style="display:none" onclick="startNewPublication()">Новая публикация</button>
+          <button class="btn" type="button" onclick="closePublishWindow()">Отмена</button>
+          <button class="btn btn-primary" id="montagePublishBtn" onclick="publishMontage()">Начать публикацию</button>
+        </div>
+      </div>
+    </div>
+    <div class="cover-zoom" id="montageCoverZoom" onclick="this.classList.remove('active')"><img id="montageCoverZoomImage" alt="Обложка крупно"></div>
+  </div> <!-- /viewMontage -->
+
+  <div id="viewAnimations" class="view">
+    <div class="card">
+      <div class="card-title">Создание анимации</div>
+      <div class="montage-grid">
+        <div class="setting-group"><label>Название</label><input id="animationBuilderName" value="Новая анимация"></div>
+        <div class="setting-group"><label>Кадров в секунду</label><input id="animationBuilderFps" type="number" value="10" min="1" max="60"></div>
+        <div class="setting-group"><label>Кадры PNG/JPG/WebP</label><input id="animationBuilderInput" type="file" accept="image/*" multiple></div>
+      </div>
+      <p class="toggle-desc">Перетаскивайте карточки кадров, чтобы изменить их порядок.</p>
+      <div class="animation-frame-list" id="animationFrameList"></div>
+      <button class="btn btn-primary" id="animationBuilderSave" onclick="saveAnimation()" style="margin-top:14px">Сохранить анимацию</button>
+      <div id="animationBuilderStatus" class="progress-detail" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let jobId = null;
+let ws = null;
+let segments = [];
+let currentTab = 'dialogue';
+let transcriptDirty = false;
+
+const SPEAKER_COLORS = ['speaker-0','speaker-1','speaker-2','speaker-3','speaker-4','speaker-5'];
+
+// Upload
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+
+async function handleFile(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  document.getElementById('fileName').textContent = file.name;
+  uploadZone.classList.add('has-file');
+  document.getElementById('apiInfo').style.display = 'block';
+  document.getElementById('progressCard').classList.add('active');
+  updateProgress(0, 'upload', `Подготовка загрузки ${file.name}`);
+
+  try {
+    const data = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/upload');
+      xhr.upload.onprogress = event => {
+        if (!event.lengthComputable) return;
+        const pct = Math.min(99, event.loaded / event.total * 100);
+        updateProgress(pct, 'upload', `Загрузка: ${(event.loaded / 1048576).toFixed(1)} / ${(event.total / 1048576).toFixed(1)} МБ`);
+      };
+      xhr.onerror = () => reject(new Error('Сеть недоступна'));
+      xhr.onload = () => {
+        let payload = {};
+        try { payload = JSON.parse(xhr.responseText); } catch (_) {}
+        if (xhr.status >= 200 && xhr.status < 300) resolve(payload);
+        else reject(new Error(payload.detail || `HTTP ${xhr.status}`));
+      };
+      xhr.send(formData);
+    });
+    jobId = data.job_id;
+    updateProgress(100, 'upload', 'Видео загружено. Выберите настройки и запустите транскрибацию.');
+    document.getElementById('settingsCard').style.display = 'block';
+    document.getElementById('startBtn').disabled = false;
+  } catch(e) {
+    showError('Ошибка загрузки: ' + e.message);
+  }
+}
+
+function toggleDiarization() {
+  const checked = document.getElementById('diarizationToggle').checked;
+  document.getElementById('speakerCountRow').style.display = checked ? 'block' : 'none';
+}
+
+async function startTranscription() {
+  if (!jobId) return;
+
+  const form = new FormData();
+  form.append('model', document.getElementById('modelSelect').value);
+  form.append('language', document.getElementById('languageSelect').value);
+  form.append('mode', document.getElementById('modeSelect').value);
+  form.append('diarization', document.getElementById('diarizationToggle').checked);
+
+  const numSpeakers = document.getElementById('numSpeakers').value;
+  if (numSpeakers && document.getElementById('diarizationToggle').checked) {
+    form.append('num_speakers', parseInt(numSpeakers));
+  }
+
+  document.getElementById('startBtn').disabled = true;
+  document.getElementById('progressCard').classList.add('active');
+  document.getElementById('resultsCard').classList.remove('active');
+  document.getElementById('errorBox').classList.remove('active');
+  updateProgress(0, 'conversion', 'Запуск обработки...');
+
+  // Connect WebSocket
+  ws = new WebSocket(`ws://${location.host}/ws/${jobId}`);
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'progress') {
+      updateProgress(msg.progress, msg.stage, msg.detail);
+    }
+  };
+  ws.onclose = () => startTranscriptionPolling();
+
+  try {
+    await fetch(`/api/transcribe/${jobId}`, { method: 'POST', body: form });
+  } catch(e) {
+    showError('Ошибка запуска: ' + e.message);
+  }
+}
+
+let transcribePollTimer = null;
+function startTranscriptionPolling() {
+  if (transcribePollTimer || !jobId) return;
+  transcribePollTimer = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/status/${jobId}`, {cache: 'no-store'});
+      if (!res.ok) return;
+      const data = await res.json();
+      updateProgress(data.progress, data.stage, data.detail);
+      if (data.status === 'done' || data.status === 'error') {
+        clearInterval(transcribePollTimer);
+        transcribePollTimer = null;
+      }
+    } catch (_) {}
+  }, 1000);
+}
+
+function updateProgress(progress, stage, detail) {
+  const pct = Math.max(0, Math.min(100, Number(progress) || 0));
+  document.getElementById('progressBar').style.width = pct + '%';
+  document.getElementById('progressPercent').textContent = pct.toFixed(1) + '%';
+
+  const stageIcons = {
+    upload: '⬆', conversion: '🔄', transcription: '🎙', diarization: '👥', merge: '🔗', done: '✅', error: '❌'
+  };
+
+  const stageNames = {
+    upload: 'Загрузка', conversion: 'Конвертация',
+    transcription: 'Транскрибация',
+    diarization: 'Диаризация',
+    merge: 'Объединение',
+    done: 'Готово',
+    error: 'Ошибка'
+  };
+
+  document.getElementById('progressStage').innerHTML =
+    `<span class="stage-icon">${stageIcons[stage] || ''}</span>${stageNames[stage] || stage}`;
+  document.getElementById('progressDetail').textContent = detail;
+
+  if (stage === 'done') {
+    setTimeout(loadResult, 500);
+  }
+  if (stage === 'error') {
+    showError(detail);
+  }
+}
+
+async function loadResult() {
+  try {
+    const res = await fetch(`/api/result/${jobId}`);
+    const data = await res.json();
+    segments = data.segments;
+    transcriptJobId = jobId;
+    window.__lastSegs = segments;
+    setTranscriptDirty(false);
+    document.getElementById('resultsCard').classList.add('active');
+    document.getElementById('montageTranscriptInfo').textContent = `Использовать транскрибацию: ${data.segments.length} сегментов`;
+    refreshProjects();
+    refreshDisplay();
+  } catch(e) {
+    showError('Ошибка загрузки результата: ' + e.message);
+  }
+}
+
+function refreshDisplay() {
+  if (!segments.length) return;
+  const display = document.getElementById('resultDisplay');
+  const showTC = document.getElementById('showTimecodes').checked;
+  const showSP = document.getElementById('showSpeakers').checked;
+
+  if (currentTab === 'dialogue') {
+    display.innerHTML = renderDialogue(segments, showTC, showSP);
+  } else if (currentTab === 'text') {
+    display.innerHTML = renderPlainText(segments, showSP);
+  } else {
+    display.innerHTML = renderJSON(segments, showTC, showSP);
+  }
+}
+
+function editableTranscriptText(seg, index) {
+  return `<span class="transcript-segment-text" contenteditable="true" spellcheck="true" data-segment-index="${index}" oninput="editTranscriptSegment(this)">${escapeHtml(seg.text)}</span>`;
+}
+
+function renderDialogue(segs, showTC, showSP) {
+  let html = '';
+  let lastSpeaker = null;
+
+  for (const [index, seg] of segs.entries()) {
+    const sp = seg.speaker;
+    if (showSP && sp && sp !== lastSpeaker) {
+      lastSpeaker = sp;
+      html += `<hr class="dialogue-separator">`;
+      html += `<div style="margin-top:8px"><strong>${speakerTag(sp)}</strong></div>`;
+    }
+
+    let line = '';
+    if (showTC) line += `<span class="timecode">[${fmtTime(seg.start)}]</span>`;
+    line += editableTranscriptText(seg, index);
+
+    html += `<div style="margin-left:${showTC ? '72px' : '0'};margin-bottom:4px">${line}</div>`;
+  }
+
+  return html || '<span style="color:var(--text2)">Нет данных</span>';
+}
+
+function renderPlainText(segs, showSP) {
+  let html = '';
+  for (const [index, seg] of segs.entries()) {
+    let line = '';
+    if (showSP && seg.speaker) line += `${speakerTag(seg.speaker)} `;
+    line += editableTranscriptText(seg, index);
+    html += `<div style="margin-bottom:4px">${line}</div>`;
+  }
+  return html || '<span style="color:var(--text2)">Нет данных</span>';
+}
+
+function renderJSON(segs, showTC, showSP) {
+  const data = segs.map(s => {
+    const e = { text: s.text };
+    if (showSP && s.speaker) e.speaker = s.speaker;
+    if (showTC) { e.start = s.start; e.end = s.end; }
+    return e;
+  });
+  return `<pre style="color:var(--text2)">${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
+}
+
+function fmtTime(t) {
+  const h = Math.floor(t/3600);
+  const m = Math.floor((t%3600)/60);
+  const s = Math.floor(t%60);
+  const ms = Math.floor((t - Math.floor(t)) * 1000);
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(ms).padStart(3,'0')}`;
+}
+
+function speakerTag(sp) {
+  if (!sp) return '';
+  const num = parseInt(sp.replace('SPEAKER_', '')) % SPEAKER_COLORS.length;
+  return `<span class="speaker-tag ${SPEAKER_COLORS[num]}">${sp}</span>`;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function switchTab(tab, btn) {
+  currentTab = tab;
+  document.querySelectorAll('.result-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  refreshDisplay();
+}
+
+function setTranscriptDirty(dirty, message = '') {
+  transcriptDirty = dirty;
+  const button = document.getElementById('saveTranscriptBtn');
+  const status = document.getElementById('transcriptSaveStatus');
+  if (button) button.disabled = !dirty;
+  if (status) status.textContent = message || (dirty
+    ? 'Есть несохранённые изменения'
+    : 'Нажмите на текст сегмента, чтобы изменить его');
+}
+
+function editTranscriptSegment(element) {
+  const index = Number(element.dataset.segmentIndex);
+  if (!Number.isInteger(index) || !segments[index]) return;
+  segments[index].text = element.innerText.replace(/\u00a0/g, ' ');
+  setTranscriptDirty(true);
+}
+
+async function saveTranscript() {
+  if (!jobId || !transcriptDirty) return;
+  const button = document.getElementById('saveTranscriptBtn');
+  const texts = segments.map(segment => segment.text);
+  button.disabled = true;
+  button.textContent = 'Сохранение...';
+  setTranscriptDirty(true, 'Сохраняем изменения...');
+  try {
+    const res = await fetch(`/api/result/${jobId}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({texts}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    const unchangedSinceRequest = segments.every((segment, index) => segment.text === texts[index]);
+    setTranscriptDirty(!unchangedSinceRequest, unchangedSinceRequest
+      ? 'Сохранено. Эта версия будет использована при экспорте и монтаже'
+      : 'Есть новые несохранённые изменения');
+    refreshProjects();
+  } catch (e) {
+    setTranscriptDirty(true, `Не удалось сохранить: ${e.message}`);
+  } finally {
+    button.textContent = 'Сохранить';
+    button.disabled = !transcriptDirty;
+  }
+}
+
+function download(format) {
+  if (!jobId) return;
+  const showSP = document.getElementById('showSpeakers').checked;
+  const showTC = document.getElementById('showTimecodes').checked;
+  window.location.href = `/api/export/${jobId}/${format}?speakers=${showSP}&timecodes=${showTC}`;
+}
+
+function showError(msg) {
+  const box = document.getElementById('errorBox');
+  box.textContent = msg;
+  box.classList.add('active');
+}
+
+// ========== АВТОМОНТАЖ ==========
+let montageJobId = localStorage.getItem('montageJobId');
+let montageActive = false;
+let transcriptJobId = null;
+let montageWs = null;
+let projects = [];
+let selectedProjectId = null;
+let montageInputDirty = false;
+
+function clearMontageOutput(clearJob = false) {
+  if (clearJob) {
+    montageJobId = null;
+    montageActive = false;
+    localStorage.removeItem('montageJobId');
+  }
+  if (montagePollTimer) {
+    clearInterval(montagePollTimer);
+    montagePollTimer = null;
+  }
+  if (montageWs) {
+    montageWs.onclose = null;
+    montageWs.close();
+    montageWs = null;
+  }
+  document.getElementById('montageResultsCard').classList.remove('active');
+  document.getElementById('openPublishWindowBtn').disabled = true;
+  document.getElementById('montagePublishResults').innerHTML = '';
+  document.getElementById('montagePublishModalResults').innerHTML = '';
+  document.getElementById('montagePublishLiveProgress').innerHTML = '';
+  document.getElementById('montagePublishError').classList.remove('active');
+  document.getElementById('montageNewPublishBtn').style.display = 'none';
+  const publishButton = document.getElementById('montagePublishBtn');
+  publishButton.disabled = false;
+  publishButton.textContent = 'Начать публикацию';
+  for (const checkbox of document.querySelectorAll('.publish-target-checkbox')) checkbox.checked = false;
+  const video = document.getElementById('montageVideo');
+  video.pause();
+  video.removeAttribute('src');
+  video.dataset.job = '';
+  video.load();
+  window.__coverState = {};
+  window.__montageCovers = [];
+  window.__selectedCoverId = '';
+  window.__publishFieldsRestored = false;
+  window.__forceNewPublication = false;
+  window.__opsState = {};
+  window.__opsBodySig = null;
+  renderOperations({});
+  const coverGrid = document.getElementById('montageCoverGrid');
+  coverGrid.innerHTML = '';
+  delete coverGrid.dataset.coverKey;
+  closePublishWindow();
+}
+
+function activateMontageJob(jobId) {
+  if (!jobId || jobId === montageJobId) return;
+  clearMontageOutput(true);
+  montageJobId = jobId;
+  montageActive = true;
+  montageInputDirty = false;
+  localStorage.setItem('montageJobId', montageJobId);
+  startMontagePolling();
+  connectMontageWs();
+}
+
+function beginNewMontageInput() {
+  montageInputDirty = true;
+  clearMontageOutput(true);
+  montageUpdateProgress(0, 'idle', 'Настройте новый ролик', false);
+}
+
+function switchView(name) {
+  document.querySelectorAll('.view-tab').forEach(b => b.classList.toggle('active', b.dataset.view === name));
+  document.getElementById('viewTranscribe').classList.toggle('active', name === 'transcribe');
+  document.getElementById('viewMontage').classList.toggle('active', name === 'montage');
+  document.getElementById('viewAnimations').classList.toggle('active', name === 'animations');
+  if (name === 'montage') {
+    refreshMontageStatus();
+    refreshProjects();
+    startMontagePolling();
+  } else if (montagePollTimer) {
+    clearInterval(montagePollTimer);
+    montagePollTimer = null;
+  }
+}
+
+function montageError(msg) {
+  const box = document.getElementById('montageErrorBox');
+  box.textContent = msg;
+  box.classList.add('active');
+}
+
+const montageUploadZone = document.getElementById('montageUploadZone');
+const montageFileInput = document.getElementById('montageFileInput');
+montageUploadZone.addEventListener('click', () => montageFileInput.click());
+montageUploadZone.addEventListener('dragover', e => { e.preventDefault(); montageUploadZone.classList.add('dragover'); });
+montageUploadZone.addEventListener('dragleave', () => montageUploadZone.classList.remove('dragover'));
+montageUploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  montageUploadZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) setMontageVideo(e.dataTransfer.files[0]);
+});
+montageFileInput.addEventListener('change', () => { if (montageFileInput.files.length) setMontageVideo(montageFileInput.files[0]); });
+
+function setMontageVideo(file) {
+  beginNewMontageInput();
+  montageVideoFile = file;
+  document.getElementById('montageFileName').textContent = file.name;
+  montageUploadZone.classList.add('has-file');
+  if (selectedProjectId) clearProject(true);
+  document.getElementById('montageStartBtn').disabled = file ? false : true;
+  const card = document.getElementById('projectPreviewCard');
+  const video = document.getElementById('projectPreviewVideo');
+  if (window.__montageObjectUrl) URL.revokeObjectURL(window.__montageObjectUrl);
+  window.__montageObjectUrl = URL.createObjectURL(file);
+  video.src = window.__montageObjectUrl;
+  card.classList.add('active');
+  renderOverlayEditor();
+  updateAnimationPreview();
+  updateSubtitlePreviewStyle();
+}
+let montageVideoFile = null;
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function fmtTimecode(t) {
+  t = Math.max(0, t || 0);
+  const m = Math.floor(t / 60);
+  const s = t % 60;
+  const ss = Math.floor(s);
+  const ms = Math.floor((s - ss) * 1000);
+  return String(m).padStart(2, '0') + ':' + String(ss).padStart(2, '0') + '.' + String(ms).padStart(3, '0');
+}
+
+function timecodeToSec(tc) {
+  if (typeof tc === 'number') return tc;
+  const raw = String(tc || '');
+  const m = raw.match(/^(\d+):(\d{2})\.(\d{3})$/);
+  if (m) return (+m[1]) * 60 + (+m[2]) + (+m[3]) / 1000;
+  const n = parseFloat(raw);
+  return isNaN(n) ? 0 : n;
+}
+
+function buildKeybar(ids, marks) {
+  // ids: {keybar, markers, playhead, video, cur, dur}
+  const kb = document.getElementById(ids.keybar);
+  const mk = document.getElementById(ids.markers);
+  const ph = document.getElementById(ids.playhead);
+  const v = document.getElementById(ids.video);
+  const cur = document.getElementById(ids.cur);
+  const dur = document.getElementById(ids.dur);
+  let duration = v.duration || 0;
+
+  const fallbackDur = () => {
+    if (marks && marks.length) return Math.max(...marks.map(m => m.time));
+    return 0;
+  };
+  const activeDur = () => duration || fallbackDur() || 0;
+
+  function buildMarkers() {
+    const d = activeDur();
+    if (!d) return;
+    mk.innerHTML = '';
+    for (const m of marks) {
+      const el = document.createElement('div');
+      el.className = 'keybar-marker' + (m.cls ? ' ' + m.cls : '');
+      el.style.left = Math.min(100, Math.max(0, (m.time / d) * 100)) + '%';
+      el.title = fmtTimecode(m.time);
+      mk.appendChild(el);
+    }
+  }
+
+  kb.onclick = e => {
+    const rect = kb.getBoundingClientRect();
+    const r = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const d = activeDur();
+    if (d) v.currentTime = r * d;
+  };
+
+  v.onloadedmetadata = () => {
+    duration = v.duration || 0;
+    dur.textContent = fmtTimecode(duration);
+    buildMarkers();
+  };
+
+  v.ontimeupdate = () => {
+    const t = v.currentTime || 0;
+    const d = activeDur();
+    ph.style.left = (d ? (t / d) * 100 : 0) + '%';
+    cur.textContent = fmtTimecode(t);
+  };
+
+  // Metadata may load at any moment (or already be loaded); watch until ready.
+  if (kb._timer) clearInterval(kb._timer);
+  kb._timer = setInterval(() => {
+    const d = v.duration || 0;
+    if (d) {
+      duration = d;
+      dur.textContent = fmtTimecode(d);
+      buildMarkers();
+      clearInterval(kb._timer);
+      kb._timer = null;
+    }
+  }, 200);
+  if (v.readyState >= 1) {
+    duration = v.duration || 0;
+    dur.textContent = fmtTimecode(duration);
+  } else {
+    dur.textContent = fmtTimecode(0);
+  }
+  buildMarkers();
+}
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function mountSubtitleOverlay(cfg) {
+  const v = document.getElementById(cfg.video);
+  const card = document.getElementById(cfg.card);
+  const textEl = document.getElementById(cfg.text);
+  const tips = {
+    x: cfg.tipX ? document.getElementById(cfg.tipX) : null,
+    y: cfg.tipY ? document.getElementById(cfg.tipY) : null,
+    s: cfg.tipS ? document.getElementById(cfg.tipS) : null,
+  };
+  const state = { x: 0.12, y: 0.78, scale: 1.0 };
+  const pointers = new Map();
+  let lastDist = 0;
+  let gesture = null;
+
+  function readState() {
+    const hx = document.getElementById('montageSubtitleX');
+    const hy = document.getElementById('montageSubtitleY');
+    const hs = document.getElementById('montageSubtitleScale');
+    if (hx && !Number.isNaN(parseFloat(hx.value))) state.x = clamp(parseFloat(hx.value), 0, 1);
+    if (hy && !Number.isNaN(parseFloat(hy.value))) state.y = clamp(parseFloat(hy.value), 0, 1);
+    if (hs && !Number.isNaN(parseFloat(hs.value))) state.scale = clamp(parseFloat(hs.value), 0.5, 2.5);
+  }
+
+  function persist() {
+    const hx = document.getElementById('montageSubtitleX');
+    const hy = document.getElementById('montageSubtitleY');
+    const hs = document.getElementById('montageSubtitleScale');
+    if (hx) hx.value = state.x.toFixed(2);
+    if (hy) hy.value = state.y.toFixed(2);
+    if (hs) hs.value = state.scale.toFixed(2);
+    const fontSize = document.getElementById('montageSubtitleFontSize');
+    if (fontSize) fontSize.value = String(Math.round(64 * state.scale));
+    const sel = document.getElementById('montageSubtitlePosition');
+    if (sel) sel.value = 'custom';
+  }
+
+  function render() {
+    card.style.left = (state.x * 100) + '%';
+    card.style.top = (state.y * 100) + '%';
+    card.style.maxWidth = (Math.min(0.76, Math.max(0.05, 1 - state.x)) * 100) + '%';
+    card.style.setProperty('--sub-scale', state.scale.toFixed(2));
+    if (tips.x) tips.x.textContent = state.x.toFixed(2);
+    if (tips.y) tips.y.textContent = state.y.toFixed(2);
+    if (tips.s) tips.s.textContent = state.scale.toFixed(2);
+  }
+
+  function dist2(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  card.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) {
+      gesture = 'drag';
+      card.classList.add('roaming');
+    } else if (pointers.size === 2) {
+      gesture = 'pinch';
+      const [a, b] = [...pointers.values()];
+      lastDist = dist2(a, b);
+    }
+  });
+
+  card.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    const rect = v.getBoundingClientRect();
+    const prev = pointers.get(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (gesture === 'drag') {
+      state.x = clamp(state.x + (e.clientX - prev.x) / rect.width, 0.02, 0.90);
+      state.y = clamp(state.y + (e.clientY - prev.y) / rect.height, 0.05, 0.95);
+      persist();
+      render();
+    } else if (gesture === 'pinch') {
+      const [a, b] = [...pointers.values()];
+      const d = dist2(a, b);
+      if (lastDist > 0) {
+        state.scale = clamp(state.scale * (d / lastDist), 0.5, 2.5);
+        persist();
+        render();
+      }
+      lastDist = d;
+    }
+  });
+
+  function endPointer(e) {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) lastDist = 0;
+    if (pointers.size === 0) {
+      gesture = null;
+      card.classList.remove('roaming');
+    }
+  }
+  card.addEventListener('pointerup', endPointer);
+  card.addEventListener('pointercancel', endPointer);
+
+  let segments = [];
+  const overlay = {
+    setSegments(segs) {
+      segments = (segs || []).slice().sort((a, b) => (a.start || 0) - (b.start || 0));
+      textEl.dataset.ready = '1';
+      showSegment(-1);
+    },
+    refresh() {
+      readState();
+      render();
+    },
+    get state() { return state; },
+  };
+
+  function showSegment(when) {
+    if (!segments.length) {
+      if (cfg.placeholder) textEl.textContent = cfg.placeholder;
+      return;
+    }
+    const t = when >= 0 ? when : (v.currentTime || 0);
+    let cur = null;
+    for (const s of segments) {
+      if ((s.start || 0) <= t && t <= (s.end || 0)) { cur = s; break; }
+    }
+    if (!cur && when < 0) cur = segments[0];
+    textEl.textContent = cur ? (cur.text || '') : '';
+  }
+
+  v.addEventListener('timeupdate', () => showSegment(-1));
+  v.addEventListener('loadedmetadata', () => showSegment(-1));
+
+  readState();
+  render();
+  return overlay;
+}
+
+// Re-read hidden x/y/scale if the select was changed manually to a preset
+document.addEventListener('change', (e) => {
+  if (e.target && e.target.id === 'montageSubtitlePosition') {
+    const sel = e.target;
+    if (sel.value !== 'custom') {
+      const pos = { bottom: { x: 0.12, y: 0.78 }, center: { x: 0.12, y: 0.5 }, top: { x: 0.12, y: 0.18 } }[sel.value] || { x: 0.12, y: 0.78 };
+      const hx = document.getElementById('montageSubtitleX');
+      const hy = document.getElementById('montageSubtitleY');
+      if (hx) hx.value = String(pos.x);
+      if (hy) hy.value = String(pos.y);
+      if (window.__projectOverlay) window.__projectOverlay.refresh();
+    }
+  }
+  if (e.target && e.target.classList && e.target.classList.contains('publish-target-checkbox')) {
+    const publishButton = document.getElementById('montagePublishBtn');
+    const anyChecked = document.querySelectorAll('.publish-target-checkbox:checked').length > 0;
+    publishButton.disabled = !anyChecked;
+    if (anyChecked && !window.__forceNewPublication) {
+      const selected = [...document.querySelectorAll('.publish-target-checkbox:checked')].map(cb => cb.value);
+      const failedCount = (window.__publishFailed || []).filter(tid => selected.includes(tid)).length;
+      publishButton.textContent = failedCount ? 'Повторить ошибки' : 'Начать публикацию';
+    }
+  }
+});
+
+async function refreshProjects() {
+  let list = [];
+  try {
+    const res = await fetch('/api/projects');
+    list = (await res.json()).projects || [];
+  } catch(e) { return; }
+  projects = list;
+  const container = document.getElementById('projectsList');
+  const count = document.getElementById('projectsCount');
+  count.textContent = list.length ? `(${list.length})` : '';
+  if (!list.length) {
+    container.innerHTML = '<div style="font-size:13px;color:var(--text2)">Пока нет проектов. Транскрибируйте видео на первой вкладке — оно появится здесь.</div>';
+    return;
+  }
+  container.innerHTML = list.map(p => {
+    const sel = p.id === selectedProjectId;
+    const st = p.transcript_status;
+    const badges =
+      st === 'done' ? '<span class="badge ok">транскрибация готова</span>'
+      : st === 'processing' ? '<span class="badge" style="background:#3a3320">обработка…</span>'
+      : '<span class="badge no">нет транскрибации</span>';
+    const segs = p.segments ? `<span class="badge" style="background:#23304a">${p.segments} seg</span>` : '';
+    return `<div class="project-row${sel ? ' selected' : ''}">
+      <div class="meta">
+        <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(p.name)}">${esc(p.name)}</div>
+        <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">${badges}${segs}${p.video_ok?'':'<span class="badge no">видео недоступно</span>'}</div>
+      </div>
+      <div class="actions">
+        ${p.transcript_status === 'done' ? `<button class="btn" onclick="selectProject('${p.id}')">Использовать</button>` : ''}
+        <button class="btn" onclick="deleteProject('${p.id}')" title="Удалить">🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+  if (!selectedProjectId && list.length && !montageVideoFile) {
+    const ready = list.find(p => p.transcript_status === 'done' && p.video_ok);
+    if (ready) selectProject(ready.id, true);
+  }
+}
+
+function selectProject(id, silent) {
+  const p = projects.find(x => x.id === id);
+  if (!p) return;
+  if (!silent) beginNewMontageInput();
+  selectedProjectId = id;
+  montageVideoFile = null;
+  document.getElementById('montageFileName').textContent = '';
+  document.getElementById('montageUploadZone').classList.remove('has-file');
+  document.getElementById('montageProjectSel').style.display = 'block';
+  document.getElementById('montageProjectName').textContent = p.name;
+  document.getElementById('montageStartBtn').disabled = p.transcript_status !== 'done';
+  showProjectPreview(p);
+  if (!silent) refreshProjects();
+}
+
+function clearProject(skipRefresh = false) {
+  selectedProjectId = null;
+  document.getElementById('montageProjectSel').style.display = 'none';
+  document.getElementById('montageStartBtn').disabled = !montageVideoFile;
+  document.getElementById('projectPreviewCard').classList.remove('active');
+  const overlaysCard = document.getElementById('overlaysCard');
+  if (overlaysCard) overlaysCard.classList.remove('active');
+  if (!skipRefresh) refreshProjects();
+}
+
+async function deleteProject(id) {
+  try {
+    await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+    if (selectedProjectId === id) clearProject();
+    refreshProjects();
+  } catch(e) { montageError('Не удалось удалить проект: ' + e.message); }
+}
+
+async function showProjectPreview(p) {
+  const card = document.getElementById('projectPreviewCard');
+  const overlaysCard = document.getElementById('overlaysCard');
+  if (!p || !p.video_ok || !p.transcript_job_id) {
+    card.classList.remove('active');
+    if (overlaysCard) overlaysCard.classList.remove('active');
+    return;
+  }
+  card.classList.add('active');
+  if (overlaysCard) overlaysCard.classList.add('active');
+  const v = document.getElementById('projectPreviewVideo');
+  const tj = p.transcript_job_id;
+  if (v.dataset.tj !== tj) {
+    v.dataset.tj = tj;
+    v.src = `/api/video/${tj}?t=${Date.now()}`;
+    v.poster = `/api/thumb/${tj}?t=${Date.now()}`;
+  }
+  let segs = [];
+  try {
+    const r = await fetch(`/api/result/${tj}`);
+    const d = await r.json();
+    segs = d.segments || [];
+  } catch(e) {}
+  window.__lastSegs = segs;
+  if (window.__projectOverlay) {
+    window.__projectOverlay.setSegments(buildPreviewSubtitleSegments(segs, document.getElementById('montageSubtitleMode').value));
+  }
+  const marks = [];
+  for (const s of segs) {
+    marks.push({ time: s.start });
+    marks.push({ time: s.end, cls: 'word' });
+  }
+  buildKeybar({
+    keybar: 'projectPreviewKeybar', markers: 'projectPreviewMarkers', playhead: 'projectPreviewPlayhead',
+    video: 'projectPreviewVideo', cur: 'projectPreviewCur', dur: 'projectPreviewDur'
+  }, marks);
+}
+
+async function loadAnimationOptions() {
+  try {
+    const res = await fetch('/api/montage/animations');
+    const data = await res.json();
+    if (!data.animations || !data.animations.length) return;
+    const options = data.animations.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('');
+    const cat = data.animations.find(a => a.id.includes('Running_Cat')) || data.animations[0];
+    const select = document.getElementById('montageAnimationId');
+    const selected = select.value;
+    select.innerHTML = `<option value="">Без анимации</option>${options}`;
+    if (selected && [...select.options].some(option => option.value === selected)) {
+      select.value = selected;
+    } else if (cat) {
+      select.value = cat.id;
+    }
+    updateAnimationPreview();
+  } catch(e) {}
+}
+
+let timelineAnimationPreviewData = {id:'', fps:10, frames:[]};
+async function updateAnimationPreview() {
+  const select = document.getElementById('montageAnimationId');
+  const preview = document.getElementById('timelineAnimationPreview');
+  if (!select || !preview) return;
+  preview.classList.toggle('active', Boolean(select.value));
+  if (!select.value) {
+    syncAnimationPreview();
+    return;
+  }
+  const manifest = await loadOverlayManifest(select.value);
+  timelineAnimationPreviewData = {id:select.value, fps:manifest.fps, frames:manifest.frames};
+  syncAnimationPreview();
+}
+
+function syncAnimationPreview() {
+  const preview = document.getElementById('timelineAnimationPreview');
+  const video = document.getElementById('projectPreviewVideo');
+  const item = preview?.querySelector('.timeline-animation-item');
+  const select = document.getElementById('montageAnimationId');
+  if (!preview || !item || !select) return;
+  const active = Boolean(select.value && timelineAnimationPreviewData.frames.length);
+  preview.classList.toggle('active', active);
+  if (!active) {
+    item.style.display = 'none';
+    return;
+  }
+  const start = Math.max(0, Number(document.getElementById('montageAnimationStart').value) || 0);
+  const duration = montageOverlayDuration();
+  const time = Number(video.currentTime) || 0;
+  const rel = clamp((time - start) / Math.max(.001, duration - start), 0, 1);
+  const scale = video.videoWidth ? video.clientWidth / video.videoWidth : video.clientWidth / 1080;
+  const offset = Number(document.getElementById('montageAnimationOffset').value) || 0;
+  item.style.left = `${rel * 100}%`;
+  item.style.marginLeft = `${offset * scale}px`;
+  item.style.display = time >= start ? 'block' : 'none';
+  item.src = timelineAnimationPreviewData.frames[Math.floor(time * timelineAnimationPreviewData.fps) % timelineAnimationPreviewData.frames.length];
+  item.style.width = `${Math.max(20, 72 * scale)}px`;
+  const markers = document.getElementById('projectPreviewMarkers');
+  if (markers && duration) {
+    let marker = markers.querySelector('.keybar-marker.anim');
+    if (!marker) {
+      marker = document.createElement('div');
+      marker.className = 'keybar-marker anim';
+      markers.appendChild(marker);
+    }
+    marker.style.left = `${clamp(start / duration * 100, 0, 100)}%`;
+    marker.title = `Анимация таймлайна: ${fmtTimecode(start)}`;
+  }
+}
+
+let montageOverlays = [];
+let selectedOverlayUid = '';
+let overlaySequence = 0;
+const overlayManifestCache = new Map();
+
+function montageOverlayDuration() {
+  const video = document.getElementById('projectPreviewVideo');
+  const videoDuration = Number(video?.duration);
+  if (Number.isFinite(videoDuration) && videoDuration > 0) return videoDuration;
+  const segmentEnd = Math.max(0, ...(window.__lastSegs || []).map(item => Number(item.end) || 0));
+  return segmentEnd || 6;
+}
+
+async function loadOverlayManifest(animationId) {
+  if (overlayManifestCache.has(animationId)) return overlayManifestCache.get(animationId);
+  let result = {fps: 10, frames: []};
+  try {
+    const manifest = await (await fetch(`/animation-assets/${encodeURIComponent(animationId)}/manifest.json`, {cache:'no-store'})).json();
+    result = {
+      fps: Number(manifest.fps) || 10,
+      frames: (manifest.frames || []).map(frame => `/animation-assets/${encodeURIComponent(animationId)}/${encodeURIComponent(typeof frame === 'string' ? frame : frame.file)}`),
+    };
+  } catch (_) {}
+  overlayManifestCache.set(animationId, result);
+  return result;
+}
+
+function selectedMontageOverlay() {
+  return montageOverlays.find(item => item.uid === selectedOverlayUid) || null;
+}
+
+async function addMontageOverlay(file) {
+  if (montageOverlays.length >= 20) {
+    montageError('Можно добавить не более 20 наложений');
+    return;
+  }
+  if (!(file instanceof File) || !/^image\/(png|jpeg|webp)$/.test(file.type)) {
+    montageError('Выберите изображение PNG, JPEG или WebP');
+    return;
+  }
+  const imageUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = imageUrl;
+    await image.decode();
+  } catch (_) {
+    URL.revokeObjectURL(imageUrl);
+    montageError('Не удалось прочитать изображение наложения');
+    return;
+  }
+  const video = document.getElementById('projectPreviewVideo');
+  const duration = montageOverlayDuration();
+  const start = clamp(Number(video.currentTime) || 0, 0, Math.max(0, duration - .05));
+  const end = Math.min(duration, start + Math.min(3, duration));
+  const uid = `overlay-${Date.now().toString(36)}-${++overlaySequence}`;
+  montageOverlays.push({
+    uid, kind:'image', file, imageUrl,
+    name: file.name,
+    start, end: Math.max(start + .05, end), x: .5, y: .5, size: 180,
+    z_index: montageOverlays.length, fps: 1, frames: [imageUrl],
+  });
+  selectedOverlayUid = uid;
+  video.currentTime = start;
+  renderOverlayEditor();
+}
+
+async function handleOverlayUpload(files) {
+  for (const file of [...files]) await addMontageOverlay(file);
+  document.getElementById('montageOverlayUpload').value = '';
+}
+
+function chooseOverlayImage() {
+  document.getElementById('montageOverlayUpload').click();
+}
+
+function overlayAddButtonHtml() {
+  return '<button class="overlay-add-button" type="button" data-overlay-add="1" aria-label="Загрузить картинку как наложение" title="Загрузить картинку">+</button>';
+}
+
+function removeSelectedOverlay() {
+  const removed = selectedMontageOverlay();
+  if (removed?.imageUrl) URL.revokeObjectURL(removed.imageUrl);
+  montageOverlays = montageOverlays.filter(item => item.uid !== selectedOverlayUid);
+  montageOverlays.forEach((item, index) => item.z_index = index);
+  selectedOverlayUid = montageOverlays.at(-1)?.uid || '';
+  renderOverlayEditor();
+}
+
+function updateSelectedOverlayFromInputs() {
+  const overlay = selectedMontageOverlay();
+  if (!overlay) return;
+  const duration = montageOverlayDuration();
+  const startValue = Number(document.getElementById('overlayStart').value);
+  const endValue = Number(document.getElementById('overlayEnd').value);
+  const sizeValue = Number(document.getElementById('overlaySize').value);
+  if (Number.isFinite(startValue)) overlay.start = clamp(startValue, 0, Math.max(0, duration - .05));
+  if (Number.isFinite(endValue)) overlay.end = clamp(endValue, overlay.start + .05, duration);
+  if (overlay.end <= overlay.start) overlay.end = Math.min(duration, overlay.start + .05);
+  if (Number.isFinite(sizeValue)) overlay.size = clamp(Math.round(sizeValue), 20, 1200);
+  renderOverlayPreview();
+  renderOverlayTimeline();
+  updateOverlayInspector(false);
+}
+
+function updateOverlayInspector(writeInputs = true) {
+  const inspector = document.getElementById('overlayInspector');
+  const overlay = selectedMontageOverlay();
+  inspector.classList.toggle('active', Boolean(overlay));
+  if (!overlay) {
+    return;
+  }
+  document.getElementById('overlayInspectorName').textContent = overlay.name;
+  if (writeInputs) {
+    const duration = montageOverlayDuration();
+    document.getElementById('overlayStart').max = String(Math.max(0, duration - .05));
+    document.getElementById('overlayEnd').max = String(duration);
+    document.getElementById('overlayStart').value = overlay.start.toFixed(2);
+    document.getElementById('overlayEnd').value = overlay.end.toFixed(2);
+    document.getElementById('overlaySize').value = String(overlay.size);
+  }
+  document.getElementById('overlayPosition').textContent =
+    `X ${overlay.x.toFixed(2)} · Y ${overlay.y.toFixed(2)} · слой ${overlay.z_index + 1}`;
+}
+
+function overlayLaneMap() {
+  const laneEnds = [];
+  const result = new Map();
+  const sorted = [...montageOverlays].sort((a, b) => a.start - b.start || a.end - b.end || a.z_index - b.z_index);
+  for (const overlay of sorted) {
+    let lane = laneEnds.findIndex(end => end <= overlay.start + .0001);
+    if (lane < 0) {
+      lane = laneEnds.length;
+      laneEnds.push(overlay.end);
+    } else {
+      laneEnds[lane] = overlay.end;
+    }
+    result.set(overlay.uid, lane);
+  }
+  return {map: result, count: Math.max(1, laneEnds.length)};
+}
+
+function renderOverlayTimeline() {
+  const root = document.getElementById('overlayTimeline');
+  const duration = montageOverlayDuration();
+  if (!montageOverlays.length) {
+    root.style.height = '44px';
+    root.innerHTML = '<div class="overlay-timeline-empty">Добавьте картинку кнопкой +</div>' + overlayAddButtonHtml();
+    return;
+  }
+  const lanes = overlayLaneMap();
+  root.style.height = `${lanes.count * 38 + 46}px`;
+  root.innerHTML = montageOverlays.map(overlay => {
+    const left = clamp(overlay.start / duration * 100, 0, 100);
+    const width = clamp((overlay.end - overlay.start) / duration * 100, .5, 100 - left);
+    const lane = lanes.map.get(overlay.uid) || 0;
+    return `<div class="overlay-clip${overlay.uid === selectedOverlayUid ? ' selected' : ''}" data-overlay-uid="${encodeURIComponent(overlay.uid)}" style="left:${left}%;width:${width}%;top:${42 + lane * 38}px">
+      <span class="overlay-clip-handle left" data-resize="left"></span>
+      <span class="overlay-clip-label">${esc(overlay.name)}</span>
+      <span class="overlay-clip-handle right" data-resize="right"></span>
+    </div>`;
+  }).join('') + `<div class="overlay-timeline-caption">Наложения</div><div class="overlay-timeline-playhead" style="top:38px;left:${clamp((Number(document.getElementById('projectPreviewVideo').currentTime) || 0) / duration * 100, 0, 100)}%"></div>` + overlayAddButtonHtml();
+}
+
+function mountOverlayPreviewItem(item, uid) {
+  const pointers = new Map();
+  let gesture = null;
+  const trash = document.getElementById('overlayTrash');
+  const pointerDistance = values => Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y);
+
+  function beginPinch(overlay) {
+    const values = [...pointers.values()];
+    gesture = {mode:'pinch', startDistance:pointerDistance(values), startSize:overlay.size, armed:false};
+    trash.classList.remove('active', 'armed');
+  }
+
+  item.addEventListener('pointerdown', event => {
+    event.preventDefault();
+    const overlay = montageOverlays.find(entry => entry.uid === uid);
+    if (!overlay) return;
+    selectedOverlayUid = uid;
+    pointers.set(event.pointerId, {x:event.clientX, y:event.clientY});
+    item.setPointerCapture(event.pointerId);
+    const resizeHandle = event.target.closest('[data-preview-resize]');
+    if (pointers.size === 2) {
+      beginPinch(overlay);
+    } else if (resizeHandle) {
+      const rect = item.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      gesture = {
+        mode:'resize', centerX, centerY, startSize:overlay.size,
+        startDistance:Math.max(1, Math.hypot(event.clientX - centerX, event.clientY - centerY)), armed:false,
+      };
+    } else {
+      gesture = {mode:'drag', x:event.clientX, y:event.clientY, overlayX:overlay.x, overlayY:overlay.y, armed:false};
+    }
+    renderOverlayTimeline();
+    updateOverlayInspector();
+    renderOverlayPreview();
+  });
+  item.addEventListener('pointermove', event => {
+    if (!gesture || !pointers.has(event.pointerId)) return;
+    const overlay = montageOverlays.find(entry => entry.uid === uid);
+    const rect = document.getElementById('projectPreviewVideo').getBoundingClientRect();
+    if (!overlay || !rect.width || !rect.height) return;
+    pointers.set(event.pointerId, {x:event.clientX, y:event.clientY});
+    if (pointers.size >= 2) {
+      if (gesture.mode !== 'pinch') beginPinch(overlay);
+      const distance = pointerDistance([...pointers.values()]);
+      if (gesture.startDistance > 0) overlay.size = clamp(Math.round(gesture.startSize * distance / gesture.startDistance), 20, 1200);
+    } else if (gesture.mode === 'resize') {
+      const distance = Math.hypot(event.clientX - gesture.centerX, event.clientY - gesture.centerY);
+      overlay.size = clamp(Math.round(gesture.startSize * distance / gesture.startDistance), 20, 1200);
+      trash.classList.remove('active', 'armed');
+    } else if (gesture.mode === 'drag') {
+      overlay.x = clamp(gesture.overlayX + (event.clientX - gesture.x) / rect.width, 0, 1);
+      overlay.y = clamp(gesture.overlayY + (event.clientY - gesture.y) / rect.height, 0, 1);
+      const showTrash = event.clientY - gesture.y > 14;
+      trash.classList.toggle('active', showTrash);
+      const trashRect = trash.getBoundingClientRect();
+      gesture.armed = showTrash && event.clientX >= trashRect.left && event.clientX <= trashRect.right
+        && event.clientY >= trashRect.top && event.clientY <= trashRect.bottom;
+      trash.classList.toggle('armed', gesture.armed);
+    }
+    renderOverlayPreview();
+    updateOverlayInspector(false);
+  });
+  function endPointer(event) {
+    const shouldDelete = pointers.size === 1 && Boolean(gesture?.armed);
+    pointers.delete(event.pointerId);
+    trash.classList.remove('active', 'armed');
+    if (shouldDelete) {
+      selectedOverlayUid = uid;
+      removeSelectedOverlay();
+      gesture = null;
+      return;
+    }
+    const overlay = montageOverlays.find(entry => entry.uid === uid);
+    if (pointers.size === 1 && overlay) {
+      const remaining = [...pointers.values()][0];
+      gesture = {mode:'drag', x:remaining.x, y:remaining.y, overlayX:overlay.x, overlayY:overlay.y, armed:false};
+    } else if (!pointers.size) {
+      gesture = null;
+    }
+  }
+  item.addEventListener('pointerup', endPointer);
+  item.addEventListener('pointercancel', endPointer);
+}
+
+function renderOverlayPreview() {
+  const layer = document.getElementById('overlayPreviewLayer');
+  const video = document.getElementById('projectPreviewVideo');
+  if (!layer || !video) return;
+  const time = Number(video.currentTime) || 0;
+  const sourceScale = video.videoWidth && video.videoHeight
+    ? Math.min(video.clientWidth / video.videoWidth, video.clientHeight / video.videoHeight)
+    : video.clientWidth / 1080;
+  const active = new Set();
+  for (const overlay of montageOverlays) {
+    if (!(overlay.start - .01 <= time && time < overlay.end)) continue;
+    if (!overlay.frames?.length) continue;
+    active.add(overlay.uid);
+    let item = [...layer.children].find(child => child.dataset.overlayUid === overlay.uid);
+    if (!item) {
+      item = document.createElement('div');
+      item.className = 'overlay-preview-item';
+      item.dataset.overlayUid = overlay.uid;
+      item.innerHTML = `<img alt="${esc(overlay.name)}" draggable="false">
+        <span class="overlay-resize-handle nw" data-preview-resize="nw"></span>
+        <span class="overlay-resize-handle ne" data-preview-resize="ne"></span>
+        <span class="overlay-resize-handle sw" data-preview-resize="sw"></span>
+        <span class="overlay-resize-handle se" data-preview-resize="se"></span>`;
+      mountOverlayPreviewItem(item, overlay.uid);
+      layer.appendChild(item);
+    }
+    let ratio = 1;
+    const image = item.querySelector('img');
+    const frameIndex = Math.floor((time - overlay.start) * overlay.fps) % overlay.frames.length;
+    const frameUrl = overlay.frames[frameIndex];
+    if (image.dataset.frame !== frameUrl) {
+      image.dataset.frame = frameUrl;
+      image.src = frameUrl;
+      image.onload = renderOverlayPreview;
+    }
+    ratio = image.naturalWidth && image.naturalHeight ? image.naturalWidth / image.naturalHeight : 1;
+    const maxSize = Math.max(20, overlay.size * sourceScale);
+    item.style.width = `${ratio >= 1 ? maxSize : maxSize * ratio}px`;
+    item.style.height = `${ratio >= 1 ? maxSize / ratio : maxSize}px`;
+    item.style.left = `${overlay.x * 100}%`;
+    item.style.top = `${overlay.y * 100}%`;
+    item.style.zIndex = String(overlay.z_index + 1);
+    item.classList.toggle('selected', overlay.uid === selectedOverlayUid);
+  }
+  for (const item of [...layer.children]) {
+    if (!active.has(item.dataset.overlayUid)) item.remove();
+  }
+}
+
+function renderOverlayEditor() {
+  renderOverlayTimeline();
+  renderOverlayPreview();
+  updateOverlayInspector();
+}
+
+let overlayTimelineGesture = null;
+function mountOverlayTimeline() {
+  const root = document.getElementById('overlayTimeline');
+  const video = document.getElementById('projectPreviewVideo');
+  root.addEventListener('pointerdown', event => {
+    if (event.target.closest('[data-overlay-add]')) {
+      event.preventDefault();
+      chooseOverlayImage();
+      return;
+    }
+    const clip = event.target.closest('.overlay-clip');
+    const duration = montageOverlayDuration();
+    const rect = root.getBoundingClientRect();
+    if (!clip) {
+      video.currentTime = clamp((event.clientX - rect.left) / rect.width, 0, 1) * duration;
+      renderOverlayEditor();
+      return;
+    }
+    event.preventDefault();
+    const uid = decodeURIComponent(clip.dataset.overlayUid);
+    const overlay = montageOverlays.find(item => item.uid === uid);
+    if (!overlay) return;
+    selectedOverlayUid = uid;
+    const mode = event.target.dataset.resize || 'move';
+    overlayTimelineGesture = {uid, mode, clientX:event.clientX, start:overlay.start, end:overlay.end};
+    root.setPointerCapture(event.pointerId);
+    video.currentTime = mode === 'right' ? overlay.end : overlay.start;
+    renderOverlayEditor();
+  });
+  root.addEventListener('pointermove', event => {
+    if (!overlayTimelineGesture) return;
+    const overlay = montageOverlays.find(item => item.uid === overlayTimelineGesture.uid);
+    const duration = montageOverlayDuration();
+    if (!overlay) return;
+    const delta = (event.clientX - overlayTimelineGesture.clientX) / root.getBoundingClientRect().width * duration;
+    if (overlayTimelineGesture.mode === 'left') {
+      overlay.start = clamp(overlayTimelineGesture.start + delta, 0, overlay.end - .05);
+      video.currentTime = Math.min(overlay.end - .001, overlay.start + .001);
+    } else if (overlayTimelineGesture.mode === 'right') {
+      overlay.end = clamp(overlayTimelineGesture.end + delta, overlay.start + .05, duration);
+      video.currentTime = Math.max(overlay.start, overlay.end - .001);
+    } else {
+      const length = overlayTimelineGesture.end - overlayTimelineGesture.start;
+      overlay.start = clamp(overlayTimelineGesture.start + delta, 0, Math.max(0, duration - length));
+      overlay.end = overlay.start + length;
+      video.currentTime = Math.min(overlay.end - .001, overlay.start + .001);
+    }
+    renderOverlayEditor();
+  });
+  const endGesture = () => { overlayTimelineGesture = null; };
+  root.addEventListener('pointerup', endGesture);
+  root.addEventListener('pointercancel', endGesture);
+}
+
+function updateSubtitlePreviewStyle() {
+  const card = document.getElementById('projectPreviewSubCard');
+  const box = document.getElementById('montageSubtitleBox');
+  const font = document.getElementById('montageSubtitleFont');
+  if (!card || !box || !font) return;
+  card.classList.toggle('no-box', !box.checked);
+  card.style.fontFamily = font.options[font.selectedIndex]?.text.includes('Системный')
+    ? '-apple-system, BlinkMacSystemFont, sans-serif'
+    : 'ComfortaaPreview, sans-serif';
+}
+
+function updateSubtitleFontSize(finalize = false) {
+  const input = document.getElementById('montageSubtitleFontSize');
+  const scale = document.getElementById('montageSubtitleScale');
+  if (!input || !scale) return;
+  if (input.value === '') {
+    if (!finalize) return;
+    input.value = '64';
+  }
+  const raw = Number(input.value);
+  if (!Number.isFinite(raw)) return;
+  if (!finalize && (raw < 24 || raw > 128)) return;
+  const size = Math.max(24, Math.min(128, raw));
+  if (finalize) input.value = String(Math.round(size));
+  scale.value = (size / 64).toFixed(3);
+  if (window.__projectOverlay) window.__projectOverlay.refresh();
+}
+
+function buildPreviewSubtitleSegments(segments, mode) {
+  if (mode === 'sentences') return segments || [];
+  const words = [];
+  for (const segment of segments || []) {
+    if (Array.isArray(segment.words) && segment.words.length) {
+      for (const word of segment.words) {
+        const text = String(word.word || word.text || '').trim();
+        if (text) words.push({start:Number(word.start)||0,end:Number(word.end)||0,text});
+      }
+      continue;
+    }
+    const parts = String(segment.text || '').trim().split(/\s+/).filter(Boolean);
+    const start = Number(segment.start) || 0;
+    const duration = Math.max(.001, (Number(segment.end) || 0) - start);
+    parts.forEach((text, index) => words.push({
+      start:start + duration * index / parts.length,
+      end:start + duration * (index + 1) / parts.length,
+      text,
+    }));
+  }
+  if (mode === 'words') return words;
+  const phrases = [];
+  for (let index = 0; index < words.length;) {
+    const remaining = words.length - index;
+    let size = Math.min(5, remaining);
+    if (remaining - size === 1) size -= 1;
+    if (size <= 1 && phrases.length) {
+      const last = phrases[phrases.length - 1];
+      last.end = words[index].end;
+      last.text += ' ' + words[index].text;
+      break;
+    }
+    const group = words.slice(index, index + Math.max(1, size));
+    phrases.push({start:group[0].start,end:group[group.length - 1].end,text:group.map(word => word.text).join(' ')});
+    index += Math.max(1, size);
+  }
+  return phrases;
+}
+
+function updatePreviewSubtitleMode() {
+  if (!window.__projectOverlay) return;
+  const mode = document.getElementById('montageSubtitleMode').value;
+  window.__projectOverlay.setSegments(buildPreviewSubtitleSegments(window.__lastSegs || [], mode));
+}
+
+function updateAutozoomDependencyNote() {
+  const note = document.getElementById('autozoomDependencyNote');
+  if (!note) return;
+  const face = document.getElementById('montageFaceTrack');
+  const zoom = document.getElementById('montageAutozoom');
+  const faceOn = !!(face && face.checked);
+  const zoomOn = !!(zoom && zoom.checked);
+  let text;
+  if (zoomOn && faceOn) {
+    text = 'Отслеживание лица включено: автозум держит кадр на лице и работает точнее.';
+  } else if (zoomOn && !faceOn) {
+    text = 'Автозум включён без отслеживания лица — зум идёт по общему кадру и может быть менее точным. Включите «Отслеживание лица» выше для следования за лицом.';
+  } else if (!zoomOn && faceOn) {
+    text = 'Отслеживание лица включено, но автозум выключен — результат отслеживания не будет использован.';
+  } else {
+    text = 'Отслеживание лица даёт данные для автозума. Без него автозум работает по общему кадру.';
+  }
+  note.textContent = text;
+  note.classList.toggle('active', zoomOn && faceOn);
+}
+
+let animationBuilderFrames = [];
+const animationBuilderInput = document.getElementById('animationBuilderInput');
+animationBuilderInput.addEventListener('change', () => {
+  animationBuilderFrames.push(...animationBuilderInput.files);
+  animationBuilderInput.value = '';
+  renderAnimationFrames();
+});
+
+function renderAnimationFrames() {
+  const list = document.getElementById('animationFrameList');
+  list.innerHTML = '';
+  animationBuilderFrames.forEach((file, index) => {
+    const card = document.createElement('div');
+    card.className = 'animation-frame';
+    card.draggable = true;
+    card.dataset.index = index;
+    const image = document.createElement('img');
+    image.src = URL.createObjectURL(file);
+    image.onload = () => URL.revokeObjectURL(image.src);
+    const label = document.createElement('small');
+    label.textContent = `${index + 1}. ${file.name}`;
+    card.append(image, label);
+    card.ondragstart = event => {
+      card.classList.add('dragging');
+      event.dataTransfer.setData('text/plain', String(index));
+    };
+    card.ondragend = () => card.classList.remove('dragging');
+    card.ondragover = event => event.preventDefault();
+    card.ondrop = event => {
+      event.preventDefault();
+      const from = Number(event.dataTransfer.getData('text/plain'));
+      if (!Number.isInteger(from) || from === index) return;
+      const [frame] = animationBuilderFrames.splice(from, 1);
+      animationBuilderFrames.splice(index, 0, frame);
+      renderAnimationFrames();
+    };
+    list.appendChild(card);
+  });
+}
+
+async function saveAnimation() {
+  const status = document.getElementById('animationBuilderStatus');
+  const button = document.getElementById('animationBuilderSave');
+  if (!animationBuilderFrames.length) {
+    status.textContent = 'Добавьте кадры.';
+    return;
+  }
+  button.disabled = true;
+  status.textContent = 'Сохранение кадров...';
+  const form = new FormData();
+  form.append('name', document.getElementById('animationBuilderName').value || 'Новая анимация');
+  form.append('fps', document.getElementById('animationBuilderFps').value || '10');
+  animationBuilderFrames.forEach(frame => form.append('frames', frame, frame.name));
+  try {
+    const response = await fetch('/api/montage/animations/create', {method:'POST', body:form});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    status.textContent = `Анимация «${data.animation.name}» сохранена и добавлена в автомонтаж.`;
+    await loadAnimationOptions();
+    document.getElementById('montageAnimationId').value = data.animation.id;
+    await updateAnimationPreview();
+  } catch (error) {
+    status.textContent = `Ошибка: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function refreshMontageStatus() {
+  try {
+    const res = await fetch('/api/montage/status', {cache: 'no-store'});
+    const s = await res.json();
+    if (!montageInputDirty && s.jobs && s.jobs.length) {
+      const latest = s.jobs[s.jobs.length - 1];
+      if (latest && latest.id !== montageJobId) activateMontageJob(latest.id);
+    }
+    const row = document.getElementById('montageStatusRow');
+    row.innerHTML = '';
+    const badge = (ok, label, cls) => `<span class="badge ${ok ? 'ok' : 'no'} ${cls || ''}">${label}: ${ok ? 'готово' : 'нет'}</span>`;
+    row.innerHTML =
+      badge(s.online, 'Интернет') + badge(s.opencode, 'opencode') +
+      badge(s.bigpickle_enabled, 'BigPickle', 'up') +
+      badge(s.face_model, 'Face landmarker') + badge(s.font, 'Шрифт СРТ') +
+      badge(s.media_repo, 'Media repo') +
+      `<span class="badge ${s.publishers.instagram_reels ? 'ok' : 'no'}">Instagram: ${s.publishers.instagram_reels ? 'ок' : 'нет'}</span>` +
+      `<span class="badge ${s.publishers.threads ? 'ok' : 'no'}">Threads: ${s.publishers.threads ? 'ок' : 'нет'}</span>` +
+      `<span class="badge ${s.publishers.youtube ? 'ok' : 'no'}">YouTube: ${s.publishers.youtube ? 'ок' : 'нет'}</span>` +
+      `<button class="badge-link" id="youtubeReauthBtn" onclick="startYouTubeReauth()" title="Открыть браузер и заново авторизовать YouTube">YouTube ↻</button>` +
+      `<span class="badge ${s.publishers.telegram ? 'ok' : 'no'}">Telegram: ${s.publishers.telegram ? 'ок' : 'нет'}</span>`;
+    document.getElementById('montageStatusDetail').textContent =
+      `Анимации: ${(s.animations || []).map(a => a.name).join(', ') || 'нет'}`;
+    const fontSelect = document.getElementById('montageSubtitleFont');
+    if (fontSelect && !fontSelect.dataset.loaded) {
+      const selectedFont = fontSelect.value;
+      fontSelect.innerHTML = (s.fonts || []).map(f => `<option value="${esc(f.path)}">${esc(f.name)}</option>`).join('');
+      if ([...fontSelect.options].some(option => option.value === selectedFont)) {
+        fontSelect.value = selectedFont;
+      } else if (fontSelect.options.length) {
+        fontSelect.selectedIndex = 0;
+      }
+      fontSelect.dataset.loaded = '1';
+      updateSubtitlePreviewStyle();
+    }
+  } catch(e) {
+    document.getElementById('montageStatusRow').textContent = 'Статус недоступен: ' + e.message;
+  }
+}
+
+async function startYouTubeReauth() {
+  const btn = document.getElementById('youtubeReauthBtn');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = 'YouTube …';
+  try {
+    const res = await fetch('/api/montage/youtube-reauth', { method: 'POST' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || ('HTTP ' + res.status));
+    }
+    alert('Браузер открыт. Подтвердите доступ YouTube в браузере — авторизация обновится автоматически.');
+    const started = Date.now();
+    const poll = setInterval(async () => {
+      try {
+        const status = await (await fetch('/api/montage/youtube-reauth')).json();
+        if (status.status === 'ok') {
+          clearInterval(poll);
+          btn.textContent = 'YouTube ↻';
+          btn.disabled = false;
+          refreshMontageStatus();
+          alert('Авторизация YouTube обновлена.');
+        } else if (status.status === 'error') {
+          clearInterval(poll);
+          btn.textContent = 'YouTube ↻';
+          btn.disabled = false;
+          alert('Не удалось обновить авторизацию: ' + (status.detail || 'ошибка'));
+        } else if (Date.now() - started > 600000) {
+          clearInterval(poll);
+          btn.textContent = 'YouTube ↻';
+          btn.disabled = false;
+        }
+      } catch (e) {
+        clearInterval(poll);
+        btn.textContent = 'YouTube ↻';
+        btn.disabled = false;
+      }
+    }, 3000);
+  } catch (e) {
+    btn.textContent = 'YouTube ↻';
+    btn.disabled = false;
+    alert('Ошибка при запуске повторной авторизации: ' + e.message);
+  }
+}
+
+async function startMontage() {
+  beginNewMontageInput();
+  document.getElementById('montageStartBtn').disabled = true;
+  document.getElementById('montageErrorBox').classList.remove('active');
+  document.getElementById('montageMontageErrorBox') && document.getElementById('montageMontageErrorBox').classList.remove('active');
+  document.getElementById('montageResultsCard').classList.remove('active');
+  const form = new FormData();
+  let hasText = false;
+  if (selectedProjectId) {
+    form.append('project_id', selectedProjectId);
+    hasText = true;
+  } else {
+    if (montageVideoFile) form.append('video', montageVideoFile);
+    const useTranscript = document.getElementById('montageUseTranscript').checked;
+    const srtInput = document.getElementById('montageSrtInput');
+    if (useTranscript && transcriptJobId) {
+      form.append('transcript_job_id', transcriptJobId);
+      hasText = true;
+    } else if (srtInput.files.length) {
+      form.append('srt', srtInput.files[0]);
+      hasText = true;
+    }
+  }
+  if (!hasText) {
+    montageError('Выберите проект, загрузите SRT или включите «использовать транскрибацию»');
+    document.getElementById('montageStartBtn').disabled = false;
+    return;
+  }
+  form.append('subtitle_mode', document.getElementById('montageSubtitleMode').value);
+  form.append('subtitle_position', document.getElementById('montageSubtitlePosition').value);
+  const sx = document.getElementById('montageSubtitleX');
+  if (sx && sx.value) form.append('subtitle_x', sx.value);
+  const sy = document.getElementById('montageSubtitleY');
+  if (sy && sy.value) form.append('subtitle_y', sy.value);
+  const ss = document.getElementById('montageSubtitleScale');
+  if (ss && ss.value) form.append('subtitle_scale', ss.value);
+  form.append('subtitle_box', document.getElementById('montageSubtitleBox').checked);
+  const subtitleFont = document.getElementById('montageSubtitleFont').value;
+  if (subtitleFont) form.append('subtitle_font', subtitleFont);
+  form.append('edge_mode', document.getElementById('montageEdgeMode').value);
+  form.append('face_tracking', document.getElementById('montageFaceTrack').checked);
+  form.append('autozoom', document.getElementById('montageAutozoom').checked);
+  form.append('prepare_mirrored', document.getElementById('montagePrepareMirrored').checked);
+  form.append('blur_banned_words', document.getElementById('montageBlurBannedWords').checked);
+  form.append('propose_cover', document.getElementById('montageProposeCover').checked);
+  form.append('cover_title', document.getElementById('montageAutoCoverTitle').value.trim());
+  form.append('subtitles', true);
+  form.append('bigpickle', document.getElementById('montageBigpickle').checked);
+
+  const animationId = document.getElementById('montageAnimationId').value;
+  if (animationId) {
+    form.append('animation_id', animationId);
+    form.append('animation_start', document.getElementById('montageAnimationStart').value || 0);
+    form.append('animation_offset_x', document.getElementById('montageAnimationOffset').value || 0);
+    form.append('animation_item_size', 72);
+  }
+  let overlayFileIndex = 0;
+  const overlayPayload = montageOverlays.map((overlay, index) => {
+    const payload = {
+      uid: overlay.uid,
+      kind: overlay.kind,
+      name: overlay.name,
+      start: overlay.start,
+      end: overlay.end,
+      x: overlay.x,
+      y: overlay.y,
+      size: overlay.size,
+      z_index: index,
+    };
+    form.append('overlay_files', overlay.file, overlay.file.name);
+    payload.kind = 'image';
+    payload.file_index = overlayFileIndex++;
+    return payload;
+  });
+  form.append('overlays_json', JSON.stringify(overlayPayload));
+  if (document.getElementById('montageZoomOverride').checked) {
+    const raw = document.getElementById('montageZoomTimeline').value.trim();
+    try {
+      JSON.parse(raw);
+      form.append('zoom_timeline_json', raw);
+    } catch(e) {
+      montageError('Таймлайн автозума — некорректный JSON');
+      document.getElementById('montageStartBtn').disabled = false;
+      return;
+    }
+  }
+
+  const logBox = document.getElementById('montageLog');
+  logBox.textContent = '';
+
+  try {
+    const res = await fetch('/api/montage/render', { method: 'POST', body: form });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'HTTP ' + res.status);
+    montageJobId = data.job_id;
+    montageActive = true;
+    montageInputDirty = false;
+    localStorage.setItem('montageJobId', montageJobId);
+    connectMontageWs();
+    startMontagePolling();
+  } catch(e) {
+    montageError('Ошибка запуска монтажа: ' + e.message);
+    document.getElementById('montageStartBtn').disabled = false;
+  }
+}
+
+function connectMontageWs() {
+  if (!montageJobId || (montageWs && montageWs.readyState < 2)) return;
+  montageWs = new WebSocket(`ws://${location.host}/ws/${montageJobId}`);
+  montageWs.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'progress') {
+      mergeOpsState({
+        progress: msg.progress, stage: msg.stage, detail: msg.detail,
+        status: (msg.stage === 'error' ? 'error' : (msg.stage === 'done' || msg.stage === 'published' ? 'done' : 'processing')),
+      });
+      renderOperations(window.__opsState);
+    } else if (msg.type === 'operation') {
+      mergeOpsState({ operation: msg.operation });
+      renderOperations(window.__opsState);
+    } else if (msg.type === 'log') {
+      const logBox = document.getElementById('montageLog');
+      logBox.textContent += msg.message + '\n';
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+  };
+  montageWs.onclose = () => {
+    if (montageJobId) refreshMontageResult();
+    if (montageActive && !document.hidden && document.getElementById('viewMontage').classList.contains('active')) {
+      setTimeout(() => { if (montageActive) connectMontageWs(); }, 1500);
+    }
+  };
+}
+
+let montagePollTimer = null;
+let montageRefreshInFlight = false;
+function startMontagePolling() {
+  if (montagePollTimer || !montageJobId || document.hidden || !document.getElementById('viewMontage').classList.contains('active')) return;
+  montagePollTimer = setInterval(refreshMontageResult, 2000);
+  refreshMontageResult();
+}
+
+window.__opsState = window.__opsState || {};
+window.__opsFold = window.__opsFold || {};
+
+function toggleOpsFold(key) {
+  window.__opsFold[key] = window.__opsFold[key] === false;
+  const node = document.querySelector('.ops-fold[data-fold="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"]');
+  if (node) node.classList.toggle('closed', window.__opsFold[key] === false);
+}
+
+function applyOpsFolds() {
+  for (const node of document.querySelectorAll('.ops-fold[data-fold]')) {
+    const key = node.getAttribute('data-fold');
+    node.classList.toggle('closed', window.__opsFold[key] === false);
+  }
+}
+
+function mergeOpsState(patch) {
+  if (!patch || typeof patch !== 'object') return;
+  let incoming = patch;
+  // Never let a stale operation snapshot overwrite a newer one (spec 4.2).
+  if (incoming.operation && window.__opsState.operation) {
+    const next = Number(incoming.operation.version) || 0;
+    const current = Number(window.__opsState.operation.version) || 0;
+    if (next && current && next < current) {
+      incoming = Object.assign({}, incoming);
+      delete incoming.operation;
+    }
+  }
+  window.__opsState = Object.assign({}, window.__opsState, incoming);
+}
+
+let operationsBodyOpen = true;
+function toggleOperationsBody() {
+  operationsBodyOpen = !operationsBodyOpen;
+  const body = document.getElementById('operationsBody');
+  if (body) body.classList.toggle('closed', !operationsBodyOpen);
+  const toggle = document.getElementById('operationToggle');
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', operationsBodyOpen ? 'true' : 'false');
+    const label = document.getElementById('operationToggleLabel');
+    if (label) label.textContent = operationsBodyOpen ? 'Скрыть подробности' : 'Показать подробности';
+    toggle.focus();
+  }
+}
+
+function opStatusLabel(status) {
+  const map = { pending: 'в очереди', running: 'выполняется', completed: 'готово', failed: 'ошибка',
+    skipped: 'пропущено', cancelled: 'отменено', done: 'готово', error: 'ошибка', generating: 'выполняется',
+    publishing: 'выполняется', processing: 'выполняется', queued: 'в очереди', preparing: 'подготовка',
+    partial: 'частично завершено', idle: 'не запускалось', uploaded: 'загружено',
+    unknown: 'требуется проверка', needs_check: 'требуется проверка', waiting: 'ожидание',
+    interrupted: 'прервано' };
+  return map[status] || status;
+}
+
+function publishStatusText(status) {
+  const map = { done: 'Опубликовано', partial: 'Частично завершено', error: 'Ошибка публикации',
+    needs_check: 'Требуется проверка', unknown: 'Требуется проверка', waiting: 'Ожидание',
+    publishing: 'Выполняется', queued: 'В очереди', preparing: 'Подготовка', failed: 'Ошибка публикации' };
+  return map[status] || opStatusLabel(status);
+}
+
+function opsElapsed(stage) {
+  const start = Number(stage.started_at);
+  if (!start) return '';
+  const end = Number(stage.finished_at) || (Date.now() / 1000);
+  const secs = Math.max(0, end - start);
+  if (secs < 0.05) return '';
+  return secs >= 60 ? (Math.floor(secs / 60) + 'м ' + Math.round(secs % 60) + 'с') : (secs.toFixed(1) + 'с');
+}
+
+function opsStageRow(stage) {
+  let dot = { pending: '', running: 'running', completed: 'done', failed: 'fail', skipped: 'skip' }[stage.status] || '';
+  if (stage.warning) dot = 'warn';
+  const pct = stage.progress == null ? null : Number(stage.progress);
+  let bar = '<span class="dot ' + dot + '"></span>';
+  bar += '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(stage.label || stage.key) + '</span>';
+  bar += '<span class="ops-stage-bar">' + (pct == null && stage.status === 'running' ? '<i class="ind"></i>'
+    : '<i style="width:' + (stage.status === 'completed' ? 100 : (pct == null ? 0 : pct)) + '%"></i>') + '</span>';
+  const elapsed = opsElapsed(stage);
+  if (elapsed) bar += '<span style="color:var(--text3);font-size:11px;min-width:44px;text-align:right">' + esc(elapsed) + '</span>';
+  const detail = stage.error || stage.warning || stage.detail || '';
+  if (detail) bar += '<span class="' + (stage.error ? 'ops-op-error' : (stage.warning ? 'ops-op-warn' : '')) + '" style="max-width:34%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text3)">' + esc(detail) + '</span>';
+  return '<div class="ops-stage">' + bar + '</div>';
+}
+
+function opsOpBlock(op) {
+  let cls = '';
+  const isFailed = op.status === 'error' || op.status === 'failed';
+  if (isFailed) cls = ' ops-op-error';
+  else if (op.warning) cls = ' ops-op-warn';
+  let html = '<div class="ops-op">';
+  html += '<div class="ops-op-head"><span>' + esc(op.label) + '</span>';
+  const statusText = op.key === 'publish' ? publishStatusText(op.status || '') : opStatusLabel(op.status || '');
+  html += '<span class="' + cls + '" style="margin-left:auto;font-size:12px;color:var(--text2)">' + esc(statusText) + '</span>';
+  html += '<span style="font-size:12px;color:var(--accent2);min-width:40px;text-align:right">' + (isFailed ? '—' : (op.progress == null ? '…' : Math.round(op.progress) + '%')) + '</span></div>';
+  if (op.progress == null) {
+    html += '<div class="ops-op-bar-wrap"><div class="ops-op-bar ind"></div></div>';
+  } else {
+    const width = Math.round(Math.max(0, Math.min(100, op.progress)));
+    html += '<div class="ops-op-bar-wrap"><div class="ops-op-bar" style="width:' + width + '%"></div></div>';
+  }
+  if (op.detail) html += '<div style="font-size:12px;color:var(--text2);margin-top:6px">' + esc(op.detail) + '</div>';
+  if (op.error) html += '<div class="ops-op-error" style="font-size:12px;margin-top:6px">' + esc(op.error) + '</div>';
+  if (op.warning) html += '<div class="ops-op-warn" style="font-size:12px;margin-top:6px">' + esc(op.warning) + '</div>';
+  if (op.stages) html += '<div style="margin-top:8px">' + op.stages.map(opsStageRow).join('') + '</div>';
+  if (op.targets && op.targets.length) {
+    html += '<div style="margin-top:6px">' + op.targets.map(function(t) {
+      const td = t.status === 'done' ? 'done' : (t.status === 'error' ? 'fail' : (t.status === 'unknown' ? 'warn' : (t.status === 'queued' ? '' : 'running')));
+      let row = '<div class="ops-stage"><span class="dot ' + td + '"></span>'
+        + '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(t.label || t.id) + '</span>'
+        + '<span style="color:var(--text2);font-size:12px">' + esc(t.detail || opStatusLabel(t.status)) + '</span></div>';
+      if (t.steps && t.steps.length) {
+        const foldKey = 'publish:' + (t.id || t.label);
+        const open = window.__opsFold[foldKey] !== false;
+        row += '<div class="ops-fold' + (open ? '' : ' closed') + '" data-fold="' + esc(foldKey) + '">'
+          + '<button type="button" class="ops-fold-toggle" onclick="toggleOpsFold(\'' + esc(foldKey).replace(/'/g, "\\'") + '\')">'
+          + '<span class="ops-caret">▾</span> ' + esc((t.steps.length || 0) + ' этапов') + '</button>'
+          + '<div class="ops-fold-body">' + t.steps.map(opsStageRow).join('') + '</div></div>';
+      }
+      return row;
+    }).join('') + '</div>';
+  }
+  return html + '</div>';
+}
+
+function targetProgressPercent(target) {
+  if (target.status === 'done') return 100;
+  if (target.status === 'error') return null;
+  if (target.status === 'unknown') return null;
+  if (target.progress != null) return Number(target.progress) || 0;
+  if (target.status === 'queued' || target.status === 'preparing' || target.status === 'publishing') return null;
+  return 0;
+}
+
+function aggregatePublishStatus(targets) {
+  if (!targets.length) return 'waiting';
+  const doneCount = targets.filter(t => t.status === 'done').length;
+  const failedCount = targets.filter(t => t.status === 'error').length;
+  const unknownCount = targets.filter(t => t.status === 'unknown').length;
+  const activeCount = targets.filter(t => ['queued', 'preparing', 'publishing'].includes(t.status)).length;
+  if (activeCount) return 'publishing';
+  if (unknownCount) return 'needs_check';
+  if (doneCount === targets.length) return 'done';
+  if (doneCount === 0) return 'error';
+  if (doneCount + failedCount === targets.length) return 'partial';
+  return 'publishing';
+}
+
+function buildOpsState(state) {
+  const ops = [];
+  const opSnap = state.operation;
+  if (opSnap) {
+    ops.push({ key: 'montage', label: 'Монтаж видео', status: opSnap.status || state.status || 'running',
+      progress: opSnap.progress, detail: opSnap.detail || '', error: opSnap.error || '',
+      warning: opSnap.warning || '', stages: opSnap.stages || [] });
+  } else if (state.status) {
+    ops.push({ key: 'montage', label: 'Монтаж видео', status: state.status,
+      progress: Number(state.progress) || 0, detail: state.detail || state.stage || '',
+      error: state.error || '', warning: '', stages: null });
+  }
+  const cs = state.cover_status;
+  if (cs && ['generating', 'done', 'error'].includes(cs)) {
+    const progress = cs === 'generating' ? (Number(state.cover_progress) || 0) : (cs === 'done' ? 100 : 0);
+    ops.push({ key: 'covers', label: 'Обложки', status: cs, progress: progress,
+      detail: state.cover_detail || '', error: state.cover_error || '', warning: '', stages: null });
+  }
+  const mv = state.mirror_variant;
+  if (mv && ['generating', 'done', 'error'].includes(mv.status)) {
+    ops.push({ key: 'mirror_variant', label: 'Отражённая версия', status: mv.status,
+      progress: mv.progress === null || mv.progress === undefined
+        ? (mv.status === 'generating' ? null : Number(mv.progress) || 0)
+        : Number(mv.progress) || 0,
+      detail: mv.detail || (mv.status === 'generating' ? 'Подготовка отражённой версии' : ''),
+      error: mv.error || '', warning: '', stages: null });
+  }
+  const prep = state.prepare_operation;
+  if (prep) {
+    ops.push({ key: 'prepare', label: 'Подготовка к публикации', status: prep.status || state.prepare_status || 'running',
+      progress: prep.progress, detail: prep.detail || '', error: prep.error || '', warning: prep.warning || '',
+      stages: prep.stages || [] });
+  } else if (state.prepare_status === 'running' || state.prepare_status === 'error') {
+    ops.push({ key: 'prepare', label: 'Подготовка к публикации', status: state.prepare_status,
+      progress: state.prepare_status === 'running' ? null : null,
+      detail: state.prepare_status === 'running' ? 'Подготовка видео к публикации' : '',
+      error: state.prepare_error || '', warning: '', stages: null });
+  }
+  if (state.publish_progress) {
+    const targets = Object.values(state.publish_progress);
+    const values = targets.map(function(t) { return targetProgressPercent(t); });
+    const anyIndeterminate = values.indexOf(null) !== -1;
+    const known = values.filter(function(v) { return v !== null; });
+    const average = targets.length ? known.reduce(function(a, b) { return a + b; }, 0) / targets.length : 0;
+    const doneCount = targets.filter(function(t) { return t.status === 'done'; }).length;
+    const failedCount = targets.filter(function(t) { return t.status === 'error'; }).length;
+    const unknownCount = targets.filter(function(t) { return t.status === 'unknown'; }).length;
+    const status = aggregatePublishStatus(targets);
+    const detailBits = ['Опубликовано ' + doneCount + ' из ' + targets.length];
+    if (failedCount) detailBits.push('ошибок: ' + failedCount);
+    if (unknownCount) detailBits.push('нужна проверка: ' + unknownCount);
+    let warning = '';
+    if (status === 'needs_check') warning = 'Результат некоторых публикаций неизвестен — проверьте вручную';
+    else if (status === 'error') warning = 'Ни одна площадка не опубликована';
+    else if (status === 'partial') warning = 'Не все площадки опубликованы';
+    ops.push({ key: 'publish', label: 'Публикация', status: status,
+      progress: anyIndeterminate ? null : average, detail: detailBits.join(' · '),
+      warning: warning, stages: null, targets: targets });
+  }
+  const jobWarnings = Array.isArray(state.warnings) ? state.warnings.filter(Boolean) : [];
+  if (jobWarnings.length) {
+    const montage = ops.find(function(o) { return o.key === 'montage'; });
+    if (montage) montage.warning = [montage.warning].concat(jobWarnings).filter(Boolean).join(' · ');
+  }
+  return ops;
+}
+
+const OPS_ACTIVE_STATUSES = ['publishing', 'preparing', 'processing', 'running', 'generating', 'queued', 'partial', 'needs_check', 'unknown', 'error'];
+function pickMainOp(ops) {
+  if (!ops.length) return null;
+  const order = ['publish', 'prepare', 'mirror_variant', 'montage', 'covers'];
+  for (const key of order) {
+    const op = ops.find(function(o) { return o.key === key; });
+    if (op && OPS_ACTIVE_STATUSES.includes(op.status)) return op;
+  }
+  return ops.find(function(o) { return o.key === 'publish'; })
+    || ops.find(function(o) { return o.key === 'montage'; })
+    || ops[0];
+}
+
+function opsBodySignature(ops) {
+  return ops.map(function(o) {
+    const stages = (o.stages || []).map(function(s) { return s.key + s.status + (s.progress == null ? 'x' : Math.round(s.progress)) + (s.started_at && s.status === 'running' ? 't' + Math.floor(Date.now() / 1000 - Number(s.started_at)) : ''); }).join(',');
+    const targets = (o.targets || []).map(function(t) { return t.id + t.status + (t.progress == null ? 'x' : Math.round(t.progress)) + ':' + (t.steps || []).map(function(s) { return s.key + s.status; }).join(','); }).join(',');
+    return o.key + o.status + Math.round(o.progress == null ? -1 : o.progress) + '|' + stages + '|' + targets + '|' + (o.warning ? 'w' : '');
+  }).join('||');
+}
+
+function renderOperations(state) {
+  const card = document.getElementById('montageProgressCard');
+  if (!card) return;
+  const ops = buildOpsState(state || {});
+  const body = document.getElementById('operationsBody');
+  const titleEl = document.getElementById('operationTitle');
+  if (!body || !titleEl) return;
+  const pctEl = document.getElementById('operationPercent');
+  const barWrap = document.getElementById('operationMainBarWrap');
+  const barEl = document.getElementById('operationMainBar');
+  const detailEl = document.getElementById('operationDetail');
+  const main = pickMainOp(ops);
+  if (main) {
+    let title = main.label;
+    if (main.key === 'publish') {
+      if (main.status === 'done' || main.status === 'completed') title = 'Опубликовано';
+      else if (main.status === 'error' || main.status === 'failed') title = 'Ошибка публикации';
+      else if (main.status === 'needs_check' || main.status === 'unknown') title = 'Требуется проверка';
+    }
+    if (main.key === 'montage' && (main.status === 'done' || main.status === 'completed')) {
+      if (main.warning) {
+        title = 'Видео готово с предупреждениями';
+      } else {
+        const published = ops.find(function(o) { return o.key === 'publish'; });
+        title = published && published.status === 'done' ? 'Опубликовано' : 'Видео готово';
+      }
+    }
+    titleEl.textContent = title;
+    if (main.error) {
+      pctEl.textContent = 'ошибка';
+      barWrap.classList.remove('indeterminate');
+      barEl.style.width = '100%';
+      detailEl.textContent = main.error;
+    } else if (main.progress == null) {
+      pctEl.textContent = '…';
+      barWrap.classList.add('indeterminate');
+      detailEl.textContent = [main.detail, main.warning].filter(Boolean).join(' · ') || opStatusLabel(main.status);
+    } else {
+      const pct = Math.max(0, Math.min(100, Number(main.progress)));
+      pctEl.textContent = pct.toFixed(1) + '%';
+      barWrap.classList.remove('indeterminate');
+      barEl.style.width = pct + '%';
+      detailEl.textContent = [main.detail, main.warning].filter(Boolean).join(' · ') || opStatusLabel(main.status);
+    }
+  } else {
+    titleEl.textContent = 'Операции';
+    pctEl.textContent = '0%';
+    barWrap.classList.remove('indeterminate');
+    barEl.style.width = '0%';
+    detailEl.textContent = 'Ожидание...';
+  }
+  body.className = 'ops-body' + (operationsBodyOpen ? '' : ' closed');
+  const signature = opsBodySignature(ops);
+  if (window.__opsBodySig !== signature) {
+    window.__opsBodySig = signature;
+    body.innerHTML = ops.length ? ops.map(opsOpBlock).join('')
+      : '<div style="font-size:12px;color:var(--text2)">Нет активных операций</div>';
+    applyOpsFolds();
+  }
+  const toggle = document.getElementById('operationToggle');
+  if (toggle) toggle.setAttribute('aria-expanded', operationsBodyOpen ? 'true' : 'false');
+}
+renderOperations(window.__opsState);
+
+function montageUpdateProgress(progress, stage, detail, refreshAfterTerminal = true) {
+  if (refreshAfterTerminal && (stage === 'done' || stage === 'published' || stage === 'error')) {
+    setTimeout(refreshMontageResult, 600);
+  }
+}
+
+function mirrorVariantReady() {
+  const vs = window.__opsState && window.__opsState.variants;
+  return !!(vs && vs.mirrored_ready);
+}
+
+function applyMirrorVariantState(data) {
+  const info = document.getElementById('montageMirrorVariantInfo');
+  const notice = document.getElementById('montageMirrorPublishNotice');
+  const mv = (data && data.mirror_variant) || (window.__opsState && window.__opsState.mirror_variant) || null;
+  const ready = !!(data && data.variants && data.variants.mirrored_ready) || mirrorVariantReady();
+  const status = mv && mv.status ? mv.status : (ready ? 'done' : 'idle');
+  if (info) {
+    if (status === 'generating') info.textContent = 'Отражённая версия: подготовка… ' + Math.round(Number(mv && mv.progress) || 0) + '%';
+    else if (status === 'done' || ready) info.textContent = 'Отражённая версия: готова к публикации';
+    else if (status === 'error') info.textContent = 'Отражённая версия: ошибка — ' + ((mv && mv.error) || 'не удалось подготовить');
+    else info.textContent = 'Отражённая версия: не подготовлена';
+  }
+  const mirrorBoxes = document.querySelectorAll('.publish-mirror-target');
+  mirrorBoxes.forEach(function(box) {
+    box.disabled = !ready;
+    if (!ready) box.checked = false;
+  });
+  if (notice) {
+    if (!ready) {
+      notice.style.display = '';
+      notice.textContent = 'Отражённая версия не готова. Включите «Создать отражённую версию» при монтаже — перевёрнутые цели станут доступны после её подготовки.';
+    } else {
+      notice.style.display = 'none';
+      notice.textContent = '';
+    }
+  }
+}
+
+function publishReadyMap(state) {
+  const pr = (state && state.publish_ready) || (window.__opsState && window.__opsState.publish_ready);
+  return pr && typeof pr === 'object' ? pr : null;
+}
+
+function applyPrepareState(data) {
+  const state = data || window.__opsState || {};
+  const info = document.getElementById('montagePrepareInfo');
+  const status = state.prepare_status || (window.__opsState && window.__opsState.prepare_status) || 'idle';
+  if (info) {
+    if (status === 'running') info.textContent = 'Подготовка видео к публикации…';
+    else if (status === 'error') info.textContent = 'Ошибка подготовки: ' + (state.prepare_error || 'не удалось подготовить видео');
+    else if (status === 'done') info.textContent = 'Видео подготовлено к публикации';
+    else info.textContent = 'Готовится автоматически после монтажа';
+  }
+  const ready = publishReadyMap(state);
+  for (const box of document.querySelectorAll('.publish-target-checkbox')) {
+    if (box.classList.contains('publish-mirror-target')) continue;
+    const label = box.parentElement;
+    if (label) label.title = '';
+  }
+  return ready;
+}
+
+async function refreshMontageResult() {
+  if (!montageJobId || montageRefreshInFlight || document.hidden) return;
+  const requestedJobId = montageJobId;
+  montageRefreshInFlight = true;
+  try {
+    const res = await fetch(`/api/montage/result/${requestedJobId}`);
+    const data = await res.json();
+    if (requestedJobId !== montageJobId) return;
+    mergeOpsState(data);
+    montageUpdateProgress(data.progress || 0, data.stage || data.status, data.detail || '', false);
+    renderOperations(window.__opsState);
+    if (data.selected_cover_id && !window.__selectedCoverId) {
+      window.__selectedCoverId = data.selected_cover_id;
+    }
+    if (!window.__publishFieldsRestored && data.last_publish_targets && data.last_publish_targets.length) {
+      const previous = data.last_publish_targets;
+      const title = previous.find(target => target.title)?.title || '';
+      const text = previous.find(target => target.text || target.caption);
+      document.getElementById('montagePublishTitle').value = title;
+      document.getElementById('montagePublishText').value = text ? (text.text || text.caption || '') : '';
+      window.__publishFieldsRestored = true;
+      updatePublishCounts();
+    }
+    renderCoverState(data);
+    applyMirrorVariantState(data);
+    applyPrepareState(data);
+    document.getElementById('montageStartBtn').disabled = true;
+    const terminalFailure = data.status === 'error' || data.status === 'failed' || data.status === 'interrupted';
+    if (terminalFailure) {
+      clearInterval(montagePollTimer);
+      montagePollTimer = null;
+      montageActive = false;
+      montageError(data.error || data.detail || 'Операция не завершилась');
+      document.getElementById('montageStartBtn').disabled = false;
+      return;
+    }
+    if (data.result) {
+      const mirrorBusy = !!(data.mirror_variant && data.mirror_variant.status === 'generating');
+      const prepareBusy = data.prepare_status === 'running';
+      if (data.status !== 'publishing' && data.cover_status !== 'generating' && !mirrorBusy && !prepareBusy) {
+        clearInterval(montagePollTimer);
+        montagePollTimer = null;
+        montageActive = false;
+      } else {
+        montageActive = true;
+      }
+      document.getElementById('montageResultsCard').classList.add('active');
+      const info = document.getElementById('montageResultInfo');
+      const size = Math.round((data.result.video_size || 0) / 1048576);
+      info.textContent = `${data.result.job_id} • ${data.result.duration ? Math.round(data.result.duration) + 's' : ''}`;
+      const video = document.getElementById('montageVideo');
+      if (video.dataset.job !== montageJobId) {
+        video.dataset.job = montageJobId;
+        video.src = `/api/montage/preview/${montageJobId}?t=${Date.now()}`;
+        video.load();
+      }
+      document.getElementById('montageVideoStage').style.display = '';
+      document.getElementById('montageVideoTimebar').style.display = '';
+      document.getElementById('montageVideoKeybar').style.display = '';
+      document.getElementById('openPublishWindowBtn').disabled = false;
+
+      document.getElementById('openPublishWindowBtn').disabled = false;
+
+      if (window.__projectOverlay) window.__projectOverlay.setSegments(window.__lastSegs || []);
+
+      const eY = document.getElementById('montageSubtitleY');
+      const eX = document.getElementById('montageSubtitleX');
+      const eS = document.getElementById('montageSubtitleScale');
+      if (eY) eY.value = eY.value || '0.78';
+      if (eX) eX.value = eX.value || '0.12';
+      if (eS) eS.value = eS.value || '1.00';
+
+      const tl = data.result.timeline;
+      const resultOverlays = tl?.overlays || [];
+      const zoomMarks = [];
+      if (tl && tl.zoom) {
+        for (const z of tl.zoom) {
+          zoomMarks.push({ time: timecodeToSec(z.timecode != null ? z.timecode : z.time) });
+        }
+      }
+      if (resultOverlays.length) {
+        for (const overlay of resultOverlays) zoomMarks.push({ time: Number(overlay.start) || 0, cls: 'anim' });
+      }
+      if (tl?.animation) zoomMarks.push({ time: Number(tl.animation.start) || 0, cls: 'anim' });
+      buildKeybar({
+        keybar: 'montageVideoKeybar', markers: 'montageVideoMarkers', playhead: 'montageVideoPlayhead',
+        video: 'montageVideo', cur: 'montageVideoCur', dur: 'montageVideoDur'
+      }, zoomMarks);
+
+      const tlBox = document.getElementById('montageTimelineInfo');
+      if (tl) {
+        let html = `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+          <span class="badge" style="background:#23304a">Позиция: ${esc(tl.subtitle_position)}</span>
+          <span class="badge" style="background:#23304a">Режим: ${esc(tl.subtitle_mode)}</span>
+          ${resultOverlays.length ? `<span class="badge ok">Наложения: ${resultOverlays.length}</span>` : ''}
+          ${tl.animation ? `<span class="badge up">Анимация таймлайна: ${esc(tl.animation.id)} (${tl.animation.start}s)</span>` : ''}
+        </div>`;
+        if (tl.zoom && tl.zoom.length) {
+          html += '<table style="width:100%;font-size:12px;border-collapse:collapse">';
+          html += '<tr style="color:var(--text2)"><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border)">Время</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border)">Зум, %</th></tr>';
+          for (const z of tl.zoom) {
+            const timeLabel = z.timecode || (z.time != null ? z.time.toFixed(3) + 's' : '−');
+            html += `<tr><td style="padding:4px 8px;font-family:ui-monospace,monospace">${esc(timeLabel)}</td><td style="padding:4px 8px">${z.percent}%</td></tr>`;
+          }
+          html += '</table>';
+        } else {
+          html += '<div>Нет событий автозума</div>';
+        }
+        tlBox.innerHTML = html;
+      } else {
+        tlBox.textContent = 'Нет данных о таймлайне';
+      }
+    }
+    if (data.publish_progress) renderPublishProgress(data.publish_progress);
+    if (data.publish && !window.__forceNewPublication) {
+      const box = document.getElementById('montagePublishResults');
+      const modalBox = document.getElementById('montagePublishModalResults');
+      box.innerHTML = '';
+      modalBox.innerHTML = '';
+      for (const [kind, r] of Object.entries(data.publish)) {
+        const url = r.permalink || (r.watch_url || r.shorts_url) || r.thread_id || `message_id=${r.message_id}`;
+        const row = url
+          ? `<div><span class="badge ok">${esc(r.kind || kind)}: OK</span> <a href="${esc(url)}" target="_blank" style="color:var(--accent2)">${esc(url)}</a></div>`
+          : `<div><span class="badge ok">${esc(r.kind || kind)}: OK</span></div>`;
+        const archive = r.archive_dir
+          ? ` <span class="badge up">архив сохранён</span>`
+          : (r.archive_error ? ` <span class="badge no" title="${esc(r.archive_error)}">ошибка архива</span>` : '');
+        box.innerHTML += row.replace('</div>', `${archive}</div>`);
+        modalBox.innerHTML += row.replace('</div>', `${archive}</div>`);
+      }
+      for (const [kind, message] of Object.entries(data.publish_errors || {})) {
+        const row = `<div><span class="badge no">${esc(kind)}: ошибка</span> ${esc(message)}</div>`;
+        box.innerHTML += row;
+        modalBox.innerHTML += row;
+      }
+      for (const [kind, message] of Object.entries(data.publish_unknown || {})) {
+        const row = `<div><span class="badge warn">${esc(kind)}: нужна ручная проверка</span> ${esc(message)}</div>`;
+        box.innerHTML += row;
+        modalBox.innerHTML += row;
+      }
+      window.__publishFailed = Object.keys(data.publish_errors || {});
+      window.__publishUnknown = Object.keys(data.publish_unknown || {});
+      if (data.status !== 'publishing') {
+        const failedTargets = Object.keys(data.publish_errors || {});
+        const unknownTargets = Object.keys(data.publish_unknown || {});
+        const publishButton = document.getElementById('montagePublishBtn');
+        for (const checkbox of document.querySelectorAll('.publish-target-checkbox')) {
+          checkbox.checked = failedTargets.includes(checkbox.value);
+        }
+        if (failedTargets.length) {
+          publishButton.disabled = false;
+          publishButton.textContent = 'Повторить ошибки';
+        } else if (unknownTargets.length) {
+          publishButton.disabled = false;
+          publishButton.textContent = 'Опубликовать выбранные';
+        } else {
+          publishButton.disabled = true;
+          publishButton.textContent = 'Опубликовано';
+          document.getElementById('montageNewPublishBtn').style.display = '';
+        }
+      }
+    }
+  } catch(e) {
+    montageError('Не удалось получить результат: ' + e.message);
+  } finally {
+    montageRefreshInFlight = false;
+  }
+}
+
+async function shareMontage() {
+  if (!montageJobId) return;
+  const button = document.getElementById('shareMontageBtn');
+  const oldText = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Подготовка видео...';
+  try {
+    const response = await fetch(`/api/montage/download/${montageJobId}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const blob = await response.blob();
+    const file = new File([blob], 'montage.mp4', {type: 'video/mp4'});
+    if (navigator.share && (!navigator.canShare || navigator.canShare({files: [file]}))) {
+      await navigator.share({title: 'Готовый ролик', files: [file]});
+      return;
+    }
+    if (navigator.share) {
+      await navigator.share({title: 'Готовый ролик', url: `${location.origin}/api/montage/download/${montageJobId}`});
+      return;
+    }
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'montage.mp4';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  } catch (error) {
+    if (error.name !== 'AbortError') montageError(`Не удалось открыть меню «Поделиться»: ${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = oldText;
+  }
+}
+
+async function publishMontage() {
+  const targets = [...document.querySelectorAll('.publish-target-checkbox:checked')].map(cb => cb.value);
+  if (!targets.length) {
+    publishWindowError('Выберите хотя бы одну цель публикации');
+    return;
+  }
+  const mirrorSelected = targets.some(t => t.endsWith('_mirrored'));
+  if (mirrorSelected && !mirrorVariantReady()) {
+    publishWindowError('Отражённая версия не готова. Включите «Создать отражённую версию» при монтаже и повторите.');
+    return;
+  }
+  const unknownSelected = targets.filter(tid => (window.__publishUnknown || []).includes(tid));
+  let confirmUnknown = false;
+  if (unknownSelected.length) {
+    const confirmed = window.confirm(
+      'Выбранные площадки ранее завершились с неизвестным результатом: ' + unknownSelected.join(', ') +
+      '.\nОтправлять публикацию повторно?'
+    );
+    if (!confirmed) return;
+    confirmUnknown = true;
+  }
+  const title = document.getElementById('montagePublishTitle').value.trim();
+  const text = document.getElementById('montagePublishText').value.trim();
+  if (targets.some(target => target.startsWith('youtube')) && !title) {
+    publishWindowError('Для YouTube укажите заголовок');
+    return;
+  }
+  const form = new FormData();
+  form.append('targets_json', JSON.stringify(targets));
+  form.append('title', title);
+  form.append('text', text);
+  if (confirmUnknown) form.append('confirm_unknown', 'true');
+  if (window.__forceNewPublication) form.append('new_publication', 'true');
+  if (window.__selectedCoverId) form.append('cover_id', window.__selectedCoverId);
+  document.getElementById('montagePublishBtn').disabled = true;
+  document.getElementById('montagePublishBtn').textContent = 'Публикация...';
+  document.getElementById('montagePublishError').classList.remove('active');
+  const initialProgress = {};
+  for (const checkbox of document.querySelectorAll('.publish-target-checkbox:checked')) {
+    initialProgress[checkbox.value] = {label:checkbox.parentElement.textContent.trim(),progress:0,status:'preparing',detail:'Отправка запроса серверу'};
+  }
+  renderPublishProgress(initialProgress);
+  document.getElementById('montageErrorBox').classList.remove('active');
+  const controller = new AbortController();
+  const requestTimeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const res = await fetch(`/api/montage/${montageJobId}/publish`, { method: 'POST', body: form, signal: controller.signal });
+    const data = await res.json();
+    if (!res.ok) {
+      publishWindowError(data.detail || 'Ошибка публикации');
+      document.getElementById('montagePublishBtn').disabled = false;
+      document.getElementById('montagePublishBtn').textContent = 'Начать публикацию';
+      return;
+    }
+    connectMontageWs();
+    window.__forceNewPublication = false;
+    document.getElementById('montageNewPublishBtn').style.display = 'none';
+    startMontagePolling();
+  } catch(e) {
+    renderPublishProgress({});
+    publishWindowError(e.name === 'AbortError'
+      ? 'Сервер не ответил за 30 секунд. Обновите страницу и повторите публикацию.'
+      : 'Ошибка публикации: ' + e.message);
+    document.getElementById('montagePublishBtn').disabled = false;
+    document.getElementById('montagePublishBtn').textContent = 'Начать публикацию';
+  } finally {
+    clearTimeout(requestTimeout);
+  }
+}
+
+function openPublishWindow() {
+  document.getElementById('montagePublishModal').classList.add('active');
+  document.body.style.overflow = 'hidden';
+  updatePublishCounts();
+  renderCoverState(window.__coverState || {});
+  applyMirrorVariantState(window.__opsState || {});
+  applyPrepareState(window.__opsState || {});
+  const video = document.getElementById('montageVideo');
+  const slider = document.getElementById('montageCoverTime');
+  slider.max = String(Math.max(0.1, Number(video.duration) || 1));
+}
+
+function startNewPublication() {
+  window.__forceNewPublication = true;
+  document.getElementById('montageNewPublishBtn').style.display = 'none';
+  document.getElementById('montagePublishResults').innerHTML = '';
+  document.getElementById('montagePublishModalResults').innerHTML = '';
+  document.getElementById('montagePublishLiveProgress').innerHTML = '';
+  document.getElementById('montagePublishError').classList.remove('active');
+  for (const checkbox of document.querySelectorAll('.publish-target-checkbox')) checkbox.checked = false;
+  applyMirrorVariantState(window.__opsState || {});
+  const publishButton = document.getElementById('montagePublishBtn');
+  publishButton.disabled = false;
+  publishButton.textContent = 'Начать публикацию';
+}
+
+function closePublishWindow() {
+  document.getElementById('montagePublishModal').classList.remove('active');
+  document.body.style.overflow = '';
+}
+
+function updatePublishCounts() {
+  const title = document.getElementById('montagePublishTitle');
+  const text = document.getElementById('montagePublishText');
+  document.getElementById('montagePublishTitleCount').textContent = `${title.value.length} / 119`;
+  document.getElementById('montagePublishTextCount').textContent = `${text.value.length} / 2000`;
+}
+
+function renderPublishProgress(items) {
+  const container = document.getElementById('montagePublishLiveProgress');
+  const statusNames = {queued:'В очереди',preparing:'Подготовка',publishing:'Публикация',done:'Готово',error:'Ошибка',unknown:'Результат неизвестен'};
+  container.innerHTML = Object.entries(items || {}).map(([id, item]) => {
+    const status = item.status || 'queued';
+    const progress = status === 'unknown' ? null : Math.max(0, Math.min(100, Number(item.progress) || 0));
+    const fill = status === 'unknown' ? '<div class="publish-live-fill ind"></div>'
+      : `<div class="publish-live-fill" style="width:${progress}%"></div>`;
+    const percentText = status === 'unknown' ? '—' : progress.toFixed(0) + '%';
+    return `<div class="publish-live-item ${esc(status)}" data-target="${esc(id)}">
+      <div class="publish-live-head"><strong>${esc(item.label || id)}</strong><span>${esc(statusNames[status] || status)} · ${percentText}</span></div>
+      <div class="publish-live-track">${fill}</div>
+      <div class="publish-live-detail">${esc(item.detail || '')}</div>
+    </div>`;
+  }).join('');
+}
+
+function publishWindowError(message) {
+  const box = document.getElementById('montagePublishError');
+  box.textContent = message;
+  box.classList.add('active');
+}
+
+function renderCoverState(state) {
+  window.__coverState = state || {};
+  if (Array.isArray(state.covers)) window.__montageCovers = state.covers;
+  const covers = window.__montageCovers || [];
+  if (window.__selectedCoverId && !covers.some(item => item.id === window.__selectedCoverId)) window.__selectedCoverId = '';
+  const status = document.getElementById('montageCoverStatus');
+  if (!status) return;
+  const progress = Number(state.cover_progress) || 0;
+  if (state.cover_status === 'generating') status.textContent = `${state.cover_detail || 'Генерация обложек'} · ${progress.toFixed(0)}%`;
+  else if (state.cover_status === 'error') status.textContent = `Ошибка генерации: ${state.cover_error || state.cover_detail || ''}`;
+  else if (covers.length) status.textContent = `Доступно обложек: ${covers.length}`;
+  else status.textContent = 'Обложки не создавались';
+  const grid = document.getElementById('montageCoverGrid');
+  const coverKey = `${montageJobId}:${covers.map(item => `${item.id}:${item.file}`).join('|')}`;
+  if (grid.dataset.coverKey !== coverKey) {
+    grid.dataset.coverKey = coverKey;
+    grid.innerHTML = covers.map(item => {
+      const assetUrl = `/api/montage/${encodeURIComponent(montageJobId)}/covers/${encodeURIComponent(item.file)}`;
+      return `<div class="cover-card" data-cover-id="${encodeURIComponent(item.id)}" data-full-url="${assetUrl}">
+        <input class="cover-check" type="checkbox" aria-label="Выбрать ${esc(item.name || item.id)}">
+        <img src="${assetUrl}?thumbnail=true" alt="${esc(item.name || 'Обложка')}" loading="lazy" decoding="async" width="360" height="640">
+        <div class="cover-name">${esc(item.name || item.id)}</div>
+      </div>`;
+    }).join('');
+    for (const card of grid.querySelectorAll('.cover-card')) {
+      const id = decodeURIComponent(card.dataset.coverId);
+      card.addEventListener('click', () => openCoverZoom(card.dataset.fullUrl));
+      card.querySelector('.cover-check').addEventListener('click', event => {
+        event.stopPropagation();
+        selectMontageCover(id);
+      });
+    }
+  }
+  for (const card of grid.querySelectorAll('.cover-card')) {
+    const selected = decodeURIComponent(card.dataset.coverId) === window.__selectedCoverId;
+    card.classList.toggle('selected', selected);
+    card.querySelector('.cover-check').checked = selected;
+  }
+}
+
+function selectMontageCover(id) {
+  window.__selectedCoverId = window.__selectedCoverId === id ? '' : id;
+  renderCoverState(window.__coverState || {});
+}
+
+function openCoverZoom(url) {
+  document.getElementById('montageCoverZoomImage').src = url;
+  document.getElementById('montageCoverZoom').classList.add('active');
+}
+
+async function uploadMontageCover() {
+  const input = document.getElementById('montageCoverUpload');
+  if (!input.files.length || !montageJobId) return;
+  const form = new FormData();
+  form.append('cover', input.files[0]);
+  const response = await fetch(`/api/montage/${montageJobId}/covers/upload`, {method:'POST',body:form});
+  const data = await response.json();
+  input.value = '';
+  if (!response.ok) { publishWindowError(data.detail || 'Не удалось загрузить обложку'); return; }
+  window.__montageCovers = data.covers || [];
+  window.__selectedCoverId = window.__montageCovers.at(-1)?.id || '';
+  renderCoverState({covers:window.__montageCovers,cover_status:'done'});
+}
+
+function toggleStopFrameCover() {
+  const tools = document.getElementById('montageStopFrameTools');
+  tools.style.display = tools.style.display === 'none' ? 'block' : 'none';
+  previewCoverFrame();
+}
+
+function previewCoverFrame() {
+  const slider = document.getElementById('montageCoverTime');
+  const time = Number(slider.value) || 0;
+  document.getElementById('montageCoverTimeLabel').textContent = fmtTimecode(time);
+  const video = document.getElementById('montageVideo');
+  if (Number.isFinite(video.duration)) video.currentTime = Math.min(time, video.duration);
+}
+
+async function generateStopFrameCover() {
+  const title = document.getElementById('montageCoverTitle').value.trim();
+  if (!title) { publishWindowError('Введите название для обложки'); return; }
+  const button = document.getElementById('generateCoverBtn');
+  button.disabled = true;
+  const form = new FormData();
+  form.append('timestamp', document.getElementById('montageCoverTime').value || 0);
+  form.append('title', title);
+  try {
+    const response = await fetch(`/api/montage/${montageJobId}/covers/generate`, {method:'POST',body:form});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Ошибка генерации');
+    startMontagePolling();
+  } catch (error) {
+    publishWindowError(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js'));
+}
+
+for (const eventName of ['gesturestart', 'gesturechange', 'gestureend']) {
+  document.addEventListener(eventName, event => event.preventDefault(), {passive:false});
+}
+document.addEventListener('touchmove', event => {
+  if (event.touches.length > 1 && !event.target.closest?.('.overlay-preview-item')) event.preventDefault();
+}, {passive:false});
+document.addEventListener('wheel', event => {
+  if (event.ctrlKey || event.metaKey) event.preventDefault();
+}, {passive:false});
+document.addEventListener('keydown', event => {
+  if ((event.ctrlKey || event.metaKey) && ['+', '=', '-', '0'].includes(event.key)) event.preventDefault();
+});
+
+window.__subDragMounted = true;
+window.__projectOverlay = mountSubtitleOverlay({
+  video: 'projectPreviewVideo', card: 'projectPreviewSubCard', text: 'projectPreviewSubText',
+  tipX: 'projectPreviewSubX', tipY: 'projectPreviewSubY', tipS: 'projectPreviewSubScale',
+  placeholder: '…',
+});
+const projectPreviewVideo = document.getElementById('projectPreviewVideo');
+let projectOverlayAnimationFrame = 0;
+function animateProjectOverlayPreview() {
+  if (projectPreviewVideo.paused || projectPreviewVideo.ended) {
+    projectOverlayAnimationFrame = 0;
+    return;
+  }
+  renderOverlayPreview();
+  syncAnimationPreview();
+  const playhead = document.querySelector('#overlayTimeline .overlay-timeline-playhead');
+  if (playhead) playhead.style.left = `${clamp((projectPreviewVideo.currentTime || 0) / montageOverlayDuration() * 100, 0, 100)}%`;
+  projectOverlayAnimationFrame = requestAnimationFrame(animateProjectOverlayPreview);
+}
+projectPreviewVideo.addEventListener('play', () => {
+  if (!projectOverlayAnimationFrame) projectOverlayAnimationFrame = requestAnimationFrame(animateProjectOverlayPreview);
+});
+projectPreviewVideo.addEventListener('pause', renderOverlayPreview);
+projectPreviewVideo.addEventListener('timeupdate', () => {
+  renderOverlayPreview();
+  syncAnimationPreview();
+  const playhead = document.querySelector('#overlayTimeline .overlay-timeline-playhead');
+  if (playhead) playhead.style.left = `${clamp((projectPreviewVideo.currentTime || 0) / montageOverlayDuration() * 100, 0, 100)}%`;
+});
+projectPreviewVideo.addEventListener('loadedmetadata', () => {
+  renderOverlayEditor();
+  syncAnimationPreview();
+});
+mountOverlayTimeline();
+updateSubtitlePreviewStyle();
+updateAutozoomDependencyNote();
+
+loadAnimationOptions();
+refreshProjects();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && montageJobId && document.getElementById('viewMontage').classList.contains('active')) {
+    refreshMontageResult();
+    connectMontageWs();
+    startMontagePolling();
+  }
+  if (!document.hidden && jobId) startTranscriptionPolling();
+});
+</script>
+
+</body>
+</html>
