@@ -1555,18 +1555,6 @@ _PUBLISH_TARGET_SPECS = {
 }
 
 
-def _default_prepare_targets(job: dict) -> list:
-    """Standard publish variants prepared right after the montage render."""
-    targets = [
-        {"id": "instagram_feed", "kind": "instagram", "mirrored": False},
-        {"id": "youtube", "kind": "youtube", "mirrored": False},
-    ]
-    if mirror_variant_ready(job):
-        targets.append({"id": "instagram_feed_mirrored", "kind": "instagram", "mirrored": True})
-        targets.append({"id": "youtube_mirrored", "kind": "youtube", "mirrored": True})
-    return targets
-
-
 def _public_publish_ready(job: dict) -> dict:
     ready = {}
     for target_id, (kind, mirrored, _label) in _PUBLISH_TARGET_SPECS.items():
@@ -1987,24 +1975,19 @@ _MONTAGE_RENDER_PROGRESS_CAP = 90.0
 def _finalize_montage_state(job: dict) -> list:
     """Set the terminal unified-pipeline state on *job* (synchronous).
 
-    A failure of an optional phase (mirrored variant or platform preparation)
-    never hides the already-produced main result: it becomes a warning and the
-    job still reaches ``done`` so the main video stays usable (spec 4).  The
-    overall progress only reaches 100% here (spec 4), never at ``main_ready``.
-    Shared by the async ``_finalize_montage`` and server-restart recovery.
+    A failure of an optional phase (mirrored variant) never hides the
+    already-produced main result: it becomes a warning and the job still
+    reaches ``done`` so the main video stays usable (spec 4).  Platform
+    preparation runs lazily at publish time and never affects render
+    readiness.  The overall progress only reaches 100% here (spec 4),
+    never at ``main_ready``.  Shared by the async ``_finalize_montage``
+    and server-restart recovery.
     """
     params = job.get("params") or {}
     warnings = []
     if params.get("prepare_mirrored") and not mirror_variant_ready(job):
         reason = str((job.get("mirror_variant") or {}).get("error") or "").strip()
         warnings.append("Отражённая версия не подготовлена" + (f": {reason}" if reason else ""))
-    if params.get("prepare_publish", True) and job.get("prepare_status") != "done":
-        reason = str(job.get("prepare_error") or "").strip()
-        label = (
-            "Подготовка файлов к публикации завершилась с ошибкой"
-            if reason else "Подготовка файлов к публикации не завершена"
-        )
-        warnings.append(label + (f": {reason}" if reason else ""))
     job["warnings"] = warnings
     job["phase"] = "ready_with_warnings" if warnings else "ready"
     job["status"] = "done"
@@ -2785,7 +2768,6 @@ async def start_montage(
     cover_title: str = Form(""),
     zoom_timeline_json: Optional[str] = Form(None),
     prepare_mirrored: bool = Form(False),
-    prepare_publish: bool = Form(True),
 ):
     job_id = str(uuid.uuid4())[:8]
     work_dir = MONTAGE_WORK / job_id
@@ -2999,7 +2981,6 @@ async def start_montage(
         },
         "zoom_timeline_override": zoom_override,
         "prepare_mirrored": bool(prepare_mirrored),
-        "prepare_publish": bool(prepare_publish),
     }
     jobs[job_id]["params"] = params
     _save_montage_job(job_id)
@@ -3031,19 +3012,9 @@ async def start_montage(
             if not mirror_variant_ready(job):
                 await broadcast_progress(job_id, 93, "rendering_mirror", "Подготовка отражённой версии")
                 await process_mirror_variant(job_id)
-        # ---- Phase C: platform-ready artefacts (automatic) ----
-        if params.get("prepare_publish", True):
-            job["phase"] = "preparing_platform_variants"
-            _save_montage_job(job_id)
-            await broadcast_progress(job_id, 96, "preparing_platform_variants", "Подготовка файлов к публикации")
-            try:
-                await process_prepare_publish(
-                    job_id, _default_prepare_targets(job)
-                )
-            except Exception as exc:
-                job["prepare_status"] = "error"
-                job["prepare_error"] = str(exc)
-        # ---- Phase D: verify and finalize (no premature done) ----
+        # ---- Phase C: verify and finalize (no premature done) ----
+        # Platform artefacts are prepared lazily at publish time
+        # (see _prepare_then_publish), never right after the render.
         job["phase"] = "verifying_outputs"
         _save_montage_job(job_id)
         await broadcast_progress(job_id, 98, "verifying_outputs", "Проверка результатов")
@@ -3070,8 +3041,8 @@ async def publish_montage(
     job = jobs[job_id]
     if job["status"] == "publishing":
         raise HTTPException(409, "Публикация уже выполняется для этого ролика")
-    # The unified pipeline may still be finishing optional phases (mirroring /
-    # platform preparation) after the main render.  The main video is already
+    # The unified pipeline may still be finishing the optional mirrored
+    # variant after the main render.  The main video is already
     # available, so publishing is allowed as soon as a result exists.
     if not job.get("result") or job["status"] not in {"done", "completed", "processing"}:
         raise HTTPException(400, "Сначала завершите рендер")

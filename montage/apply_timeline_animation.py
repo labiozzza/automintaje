@@ -182,7 +182,7 @@ def main() -> None:
             "-c:v", "libx264", "-preset", "medium", "-crf", "0",
             "-pix_fmt", "yuv420p", "-c:a", "copy",
             "-movflags", "+faststart",
-            "-shortest", str(output_video),
+            str(output_video),
         ],
         stdin=subprocess.PIPE,
     )

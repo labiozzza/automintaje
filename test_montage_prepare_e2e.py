@@ -1,9 +1,10 @@
 """
-E2E тест единого автоматического процесса монтажа (реальный FFmpeg, без отправки в соцсети).
+E2E тест: рендер не готовит файлы к публикации (реальный FFmpeg, без отправки в соцсети).
 
-Проверяет, что один запуск монтажа с включённым отражением сам создаёт обычную и
-отражённую версии и все платформенные артефакты, без ручных кнопок подготовки.
-Публикация (сетевые операции) здесь не запускается вообще.
+Проверяет, что монтаж сам по себе создаёт только основной ролик (+ отражённую
+версию при prepare_mirrored), а подготовка платформенных артефактов происходит
+только в момент нажатия кнопки публикации. Публикация (сетевые операции) здесь
+не запускается вообще.
 
 ВАЖНО: этот тест НИКОГДА не вызывает POST /publish и не публикует ничего в
 реальные соцсети. Авто-подготовка при публикации и guard-поведение проверяются
@@ -107,7 +108,6 @@ def main():
         ("autozoom", "false"),
         ("subtitles", "true"),
         ("bigpickle", "false"),
-        ("prepare_publish", "false"),
     ])
     job_id = resp.get("job_id")
     check("Рендер создал job_id", bool(job_id), resp)
@@ -125,9 +125,9 @@ def main():
           not (data.get("variants") or {}).get("mirrored_ready"),
           str(data.get("variants")))
 
-    # 2. Единый автоматический процесс: один запуск монтажа с prepare_publish и
-    #    prepare_mirrored сам готовит обычную + отражённую версии и все
-    #    платформенные артефакты. Ручных вызовов подготовки больше нет.
+    # 2. Рендер с отражённой версией: mirror готов, но платформенные
+    #    артефакты НЕ создаются — подготовка происходит только по клику
+    #    «Опубликовать». Запроса на /publish НЕТ.
     resp2 = post_multipart(f"{BASE}/api/montage/render", [
         ("video", ("montage_test.mp4", VIDEO)),
         ("srt", ("segments.srt", SRT)),
@@ -136,44 +136,36 @@ def main():
         ("autozoom", "false"),
         ("subtitles", "true"),
         ("bigpickle", "false"),
-        ("prepare_publish", "true"),
         ("prepare_mirrored", "true"),
     ])
     job2 = resp2.get("job_id")
     check("Второй рендер создал job_id", bool(job2), resp2)
 
     data2 = poll(job2, lambda d: d.get("status") in ("done", "error"), timeout=300)
-    check("Единый процесс завершился", data2.get("status") == "done", data2.get("status"))
+    check("Рендер с отражением завершился", data2.get("status") == "done", data2.get("status"))
     check("Фаза ready (без предупреждений)", data2.get("phase") == "ready",
           f"phase={data2.get('phase')} warnings={data2.get('warnings')}")
     check("Предупреждений нет", not (data2.get("warnings") or []), str(data2.get("warnings")))
-    check("Подготовка к публикации завершена", data2.get("prepare_status") == "done",
-          str(data2.get("prepare_error")))
 
     mv = data2.get("mirror_variant") or {}
-    check("Отражённая версия готова (авто)",
+    check("Отражённая версия готова",
           mv.get("status") == "done" and (data2.get("variants") or {}).get("mirrored_ready"),
           str(mv.get("error")))
 
-    ready = data2.get("publish_ready") or {}
-    check("instagram_feed готов (авто)", ready.get("instagram_feed"), str(ready))
-    check("youtube готов (авто)", ready.get("youtube"), str(ready))
-    check("instagram_feed_mirrored готов (авто)", ready.get("instagram_feed_mirrored"), str(ready))
-    check("youtube_mirrored готов (авто)", ready.get("youtube_mirrored"), str(ready))
+    check("Подготовка к публикации не запускалась при рендере",
+          data2.get("prepare_status") != "done",
+          str(data2.get("prepare_status")))
 
-    # 3. Подготовленные файлы существуют и отличаются от исходника.
+    ready = data2.get("publish_ready") or {}
+    check("Цели не готовы до нажатия публикации",
+          bool(ready) and not any(ready.values()),
+          str(ready))
+
+    # 3. Файлов подготовки нет: publish_prep появится только при публикации.
     work = Path(data2.get("result", {}).get("result_video") or "")
     workdir = work.parent / "publish_prep"
     files = sorted(p.name for p in workdir.glob("*.mp4")) if workdir.exists() else []
-    check("Файлы подготовки созданы", len(files) >= 3, f"files={files}")
-    ig_main = next((p for p in workdir.glob("*instagram_main*") if p.is_file()), None) if workdir.exists() else None
-    check("Обычная Instagram-версия создана", ig_main is not None, f"files={files}")
-    ig_mirror = next((p for p in workdir.glob("*instagram_mirror*") if p.is_file()), None) if workdir.exists() else None
-    check("Отражённая Instagram-версия создана", ig_mirror is not None, f"files={files}")
-    if ig_main is not None and work.exists():
-        check("Обычная Instagram-версия отличается по размеру от исходника",
-              ig_main.stat().st_size != work.stat().st_size,
-              f"main={work.stat().st_size} prepared={ig_main.stat().st_size}")
+    check("Файлы подготовки не созданы при рендере", len(files) == 0, f"files={files}")
 
     print("\n==================================================")
     print(f"ИТОГО: {PASS} PASS, {FAIL} FAIL")

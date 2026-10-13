@@ -245,7 +245,7 @@ class MontageCleanupTests(unittest.TestCase):
 
     def test_finalize_montage_marks_ready_without_warnings(self):
         job, _ = self.make_job(job_id="finishok", status="processing")
-        job["params"] = {"prepare_publish": True}
+        job["params"] = {"prepare_mirrored": False}
         job["prepare_status"] = "done"
         with mock.patch.object(app, "_save_montage_job", lambda *a, **k: None), \
                 mock.patch.object(app, "_montage_announce", new=mock.AsyncMock()):
@@ -255,9 +255,11 @@ class MontageCleanupTests(unittest.TestCase):
         self.assertEqual(job["phase"], "ready")
         self.assertEqual(job["warnings"], [])
 
-    def test_finalize_montage_records_prepare_warning(self):
+    def test_finalize_montage_ignores_prepare_state(self):
+        # Platform preparation runs lazily at publish time and never affects
+        # render readiness: a stale prepare error must not produce warnings.
         job, _ = self.make_job(job_id="finishwarn", status="processing")
-        job["params"] = {"prepare_publish": True}
+        job["params"] = {"prepare_mirrored": False}
         job["prepare_status"] = "error"
         job["prepare_error"] = "ffmpeg boom"
         with mock.patch.object(app, "_save_montage_job", lambda *a, **k: None), \
@@ -265,9 +267,8 @@ class MontageCleanupTests(unittest.TestCase):
             asyncio.run(app._finalize_montage(job["id"]))
 
         self.assertEqual(job["status"], "done")
-        self.assertEqual(job["phase"], "ready_with_warnings")
-        self.assertTrue(any("ffmpeg boom" in warning for warning in job["warnings"]),
-                        job["warnings"])
+        self.assertEqual(job["phase"], "ready")
+        self.assertEqual(job["warnings"], [])
 
     def test_recovery_retries_cleanup_and_preserves_download_and_preview(self):
         job, workdir = self.make_job(job_id="recover01", status="processing")

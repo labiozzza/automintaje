@@ -182,7 +182,7 @@ class OperationRecoveryTest(unittest.TestCase):
             phase="main_ready",
             stage="main_ready",
             detail="Основной ролик готов",
-            params={"prepare_publish": True, "prepare_mirrored": True},
+            params={"prepare_mirrored": True},
             prepare_status="idle",
             mirror_variant=None,
             last_publish_targets=[],
@@ -193,7 +193,7 @@ class OperationRecoveryTest(unittest.TestCase):
         self.assertEqual(job["phase"], "ready_with_warnings")
         joined = " ".join(job["warnings"])
         self.assertIn("Отражённая версия", joined)
-        self.assertIn("не завершена", joined)
+        self.assertNotIn("Подготовка файлов", joined)
         self.assertEqual(job["progress"], 100)
         self.assertNotIn((job.get("operation") or {}).get("status"), {"running", "pending"})
 
@@ -202,7 +202,7 @@ class OperationRecoveryTest(unittest.TestCase):
         self._write_state(
             status="processing",
             phase="rendering_mirror",
-            params={"prepare_publish": True, "prepare_mirrored": True},
+            params={"prepare_mirrored": True},
             prepare_status="idle",
             mirror_variant={
                 "status": "generating",
@@ -219,11 +219,14 @@ class OperationRecoveryTest(unittest.TestCase):
         self.assertEqual(job["status"], "done")
 
     def test_restart_during_preparation_marks_prepare_interrupted(self):
+        # Preparation now runs inside the publish flow (_prepare_then_publish),
+        # so an interrupted prepare is recovered from a "publishing" job.
+        # Render readiness is unaffected: no warnings, phase "ready".
         (self.workdir / "final.mp4").write_bytes(b"v")
         self._write_state(
-            status="processing",
-            phase="preparing_platform_variants",
-            params={"prepare_publish": True, "prepare_mirrored": False},
+            status="publishing",
+            phase="publishing",
+            params={"prepare_mirrored": False},
             prepare_status="running",
             prepare_operation={
                 "version": 4,
@@ -240,7 +243,8 @@ class OperationRecoveryTest(unittest.TestCase):
         self.assertEqual(job["prepare_status"], "error")
         self.assertIn("прерван", job["prepare_error"].lower())
         self.assertEqual(job["prepare_operation"]["status"], "failed")
-        self.assertEqual(job["phase"], "ready_with_warnings")
+        self.assertEqual(job["phase"], "ready")
+        self.assertEqual(job["warnings"], [])
         self.assertEqual(job["status"], "done")
         running = [s for s in job["prepare_operation"]["stages"] if s["status"] == "running"]
         self.assertEqual(running, [])
@@ -250,7 +254,7 @@ class OperationRecoveryTest(unittest.TestCase):
         self._write_state(
             status="processing",
             phase="verifying_outputs",
-            params={"prepare_publish": True, "prepare_mirrored": False},
+            params={"prepare_mirrored": False},
             prepare_status="done",
             mirror_variant=None,
             last_publish_targets=[],
