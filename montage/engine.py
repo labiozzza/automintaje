@@ -467,12 +467,43 @@ def resolve_camera_options(options: dict[str, Any]) -> dict[str, Any]:
         "max_speed": _num("cam_max_speed", 0.35, 0.0, 2.0),
         "wobble": bool(options.get("camera_wobble", False)),
     }
-    return {
+    obj = options.get("object_tracking") or {}
+    obj_enabled = bool(obj.get("enabled")) and bool(obj.get("session_id"))
+    obj_camera_raw = obj.get("camera") or {} if isinstance(obj, dict) else {}
+    obj_mode = str(obj_camera_raw.get("mode") or "object_hold")
+    if obj_mode not in ("object_hold", "object_live"):
+        obj_mode = "object_hold"
+    object_spec = None
+    if obj_enabled:
+        def _onum(key: str, default: float, low: float, high: float) -> float:
+            try:
+                value = float(obj_camera_raw.get(key, default))
+            except (TypeError, ValueError):
+                value = float(default)
+            return min(high, max(low, value))
+        camera = {
+            "mode": obj_mode,
+            "eye_x": 0.50,
+            "eye_y": 0.50,
+            "follow_strength": _onum("follow_strength", 0.30, 0.0, 1.0),
+            "lag_seconds": _onum("lag_seconds", 0.40, 0.0, 3.0),
+            "min_zoom": _onum("min_zoom", 1.12, 1.05, 1.25),
+            "max_speed": _onum("max_speed", 0.35, 0.0, 2.0),
+            "wobble": bool(obj_camera_raw.get("wobble", False)),
+        }
+        # Object Tracking replaces eye tracking as the camera driver;
+        # MediaPipe never runs just to steer the camera.
+        object_spec = {"enabled": True,
+                       "session_id": str(obj.get("session_id")),
+                       "camera": camera}
+    resolved = {
         "camera": camera,
         "edge_mode": normalize_edge_mode(options.get("edge_mode")),
-        "do_track": mode in {"hold", "live"},
-        "do_zoom_stage": bool(options.get("autozoom", False)) or mode != "off",
+        "do_track": (mode in {"hold", "live"}) and not obj_enabled,
+        "do_zoom_stage": bool(options.get("autozoom", False)) or mode != "off" or obj_enabled,
+        "object": object_spec,
     }
+    return resolved
 
 
 def write_static_tracking(
@@ -553,6 +584,56 @@ def inject_camera_config(
         zoom_config_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
     except Exception as exc:
         raise RuntimeError(f"Не удалось записать настройки камеры: {exc}")
+
+
+_MIRROR_WORKDIR_NAME = "variants_mirrored"
+
+
+def _ot_sessions_root(workdir: Path) -> Path:
+    """Shared sessions dir without side effects (never creates anything).
+
+    Mirror renders nest one level deeper than main renders; the sessions
+    dir always sits next to job dirs, so step out of the mirror dir first.
+    """
+    workdir = Path(workdir)
+    if workdir.name == _MIRROR_WORKDIR_NAME:
+        workdir = workdir.parent
+    return workdir.parent / "object_tracking_sessions"
+
+
+def load_object_track(workdir: Path, object_spec: dict[str, Any],
+                      mirrored: bool) -> dict[str, Any]:
+    """Load a confirmed object trajectory for the zoom-stage config.
+
+    Raises with a user-facing message when the session is missing,
+    unconfirmed or empty.  Mask payloads are dropped (anchors only).
+    """
+    from .object_tracking import service as ot_service
+    from .object_tracking import storage as ot_storage
+    session_id = str((object_spec or {}).get("session_id") or "")
+    if not session_id.replace("_", "").replace("-", "").isalnum():
+        raise RuntimeError("Сессия отслеживания объекта не найдена")
+    session_dir = _ot_sessions_root(workdir) / Path(session_id).name
+    if not session_dir.is_dir():
+        raise RuntimeError("Сессия отслеживания объекта не найдена")
+    selection = ot_storage.read_selection(session_dir) or {}
+    if selection.get("status") != "confirmed":
+        raise RuntimeError("Траектория объекта не подтверждена для монтажа")
+    samples = []
+    for sample in ot_storage.iter_samples(session_dir):
+        if not isinstance(sample, dict):
+            continue
+        samples.append({
+            "frame": int(sample.get("frame", 0)),
+            "x": float(sample.get("x", 0.5)),
+            "y": float(sample.get("y", 0.5)),
+            "visible": bool(sample.get("visible")),
+            "suspicious": bool(sample.get("suspicious")),
+        })
+    if not any(s["visible"] for s in samples):
+        raise RuntimeError("В траектории объекта нет видимых кадров")
+    camera = dict((object_spec or {}).get("camera") or {})
+    return {"samples": samples, "camera": camera, "mirrored": bool(mirrored)}
 
 
 def ensure_tracking_has_anchors(tracking_path: Path) -> bool:
@@ -848,6 +929,22 @@ def render_montage(
     if zoom_config_path.exists():
         inject_camera_config(zoom_config_path, camera_cfg, edge_mode,
                              bool(options.get("autozoom", False)) or manual_timeline)
+    object_spec = resolved_camera.get("object")
+    if object_spec is not None and zoom_config_path.exists():
+        _start("object", "Загрузка траектории объекта...")
+        try:
+            cfg = json.loads(zoom_config_path.read_text(encoding="utf-8"))
+            render = cfg.get("render")
+            if not isinstance(render, dict):
+                render = {}
+                cfg["render"] = render
+            render["object_track"] = load_object_track(
+                workdir, object_spec, bool(options.get("mirror_horizontal")))
+            render["eye_screen"] = {"x": 0.5, "y": 0.5}
+            zoom_config_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+        except Exception as exc:
+            raise RuntimeError(f"Не удалось подключить отслеживание объекта: {exc}")
+        _done("object", "Траектория объекта подключена")
 
     _done("configs", "Конфиги готовы")
 
@@ -1218,6 +1315,11 @@ def render_montage(
         "camera_mode": camera_cfg["mode"],
         "camera": {key: camera_cfg[key] for key in
                    ("mode", "follow_strength", "lag_seconds", "min_zoom", "wobble")},
+        "object_tracking": ({
+            "enabled": True,
+            "mode": str((resolved_camera.get("object") or {}).get("camera", {}).get("mode")),
+            "session_id": str((resolved_camera.get("object") or {}).get("session_id")),
+        } if resolved_camera.get("object") else {"enabled": False}),
         "autozoom": options.get("autozoom", False),
         "zoom_stage": do_zoom,
         "mirror_horizontal": do_mirror,

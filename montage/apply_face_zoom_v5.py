@@ -36,6 +36,13 @@ except ImportError:  # run as a script: `python montage/apply_face_zoom_v5.py`
     from montage.camera_trajectory import (  # noqa: E402
         CameraSettings, compute_camera_track, settings_from_dict,
     )
+try:
+    from .object_tracking.trajectory_adapter import OBJECT_MODES, compute_object_track
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from montage.object_tracking.trajectory_adapter import (  # noqa: E402
+        OBJECT_MODES, compute_object_track,
+    )
 
 
 EDGE_MODES = {
@@ -447,6 +454,31 @@ def apply_eye_follow_lag(xs: np.ndarray, ys: np.ndarray, fps: float, lag_seconds
     return out_x, out_y
 
 
+def _object_track_series(
+    object_track: dict[str, Any],
+    total_frames: int,
+    fps: float,
+    camera: CameraSettings,
+    timeline: list[float],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Object-camera anchors via the shared trajectory math (eye path untouched)."""
+    samples = object_track.get("samples") or []
+    if not isinstance(samples, list) or not samples:
+        fail("object tracking has no samples")
+    raw_settings = object_track.get("camera") or {}
+    mirrored = bool(object_track.get("mirrored", False))
+    xs, ys, zs, loss = compute_object_track(
+        [s for s in samples if isinstance(s, dict)], fps, total_frames,
+        [max(1.0, float(z)) for z in timeline],
+        raw_settings if isinstance(raw_settings, dict) else {},
+        mirrored=mirrored)
+    if loss:
+        print(f"object tracking: {len(loss)} loss span(s), holding last good position")
+    return (np.asarray(xs, dtype=np.float64),
+            np.asarray(ys, dtype=np.float64),
+            np.asarray(zs, dtype=np.float64))
+
+
 def build_interpolated_series(
     data: dict[str, Any],
     total_frames: int,
@@ -468,6 +500,7 @@ def build_interpolated_series(
     eye_follow_lag: bool = False,
     eye_lag_seconds: float = 0.35,
     camera: CameraSettings | None = None,
+    object_track: dict[str, Any] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     settings = data.get("settings", {}) or {}
     eye_y_offset = float(settings.get("eye_y_offset", 0.06))
@@ -580,12 +613,16 @@ def build_interpolated_series(
         upper = float(zoom_max)
 
     cam = camera or CameraSettings(mode="off")
-    track_x, track_y, track_z = compute_camera_track(
-        sample_frames, sample_eyes, fps, total_frames, timeline_z, cam,
-    )
-    out_x = np.asarray(track_x, dtype=np.float64)
-    out_y = np.asarray(track_y, dtype=np.float64)
-    out_z = np.asarray(track_z, dtype=np.float64)
+    if cam.mode in OBJECT_MODES and isinstance(object_track, dict):
+        out_x, out_y, out_z = _object_track_series(
+            object_track, total_frames, fps, cam, timeline_z)
+    else:
+        track_x, track_y, track_z = compute_camera_track(
+            sample_frames, sample_eyes, fps, total_frames, timeline_z, cam,
+        )
+        out_x = np.asarray(track_x, dtype=np.float64)
+        out_y = np.asarray(track_y, dtype=np.float64)
+        out_z = np.asarray(track_z, dtype=np.float64)
     if math.isfinite(upper):
         out_z = np.minimum(out_z, upper)
     return out_x, out_y, out_z
@@ -951,6 +988,8 @@ def main() -> None:
         eye_follow_lag=eye_follow_lag,
         eye_lag_seconds=eye_lag_seconds,
         camera=camera_settings,
+        object_track=(cfg_get(render_cfg, "object_track", None)
+                      if camera_settings.mode in OBJECT_MODES else None),
     )
 
     print(

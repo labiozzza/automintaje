@@ -273,10 +273,14 @@ def compute_camera_track(
 
 
 def settings_from_dict(raw: dict) -> CameraSettings:
-    """Build settings from a render config block (with validation)."""
+    """Build settings from a render config block (with validation).
+
+    Eye modes (off/hold/live) behave exactly as before; object modes
+    (object_hold/object_live) are accepted for the Object Tracking path.
+    """
     raw = raw or {}
     mode = str(raw.get("mode") or "off").lower()
-    if mode not in {"off", "hold", "live"}:
+    if mode not in {"off", "hold", "live", "object_hold", "object_live"}:
         mode = "off"
     return CameraSettings(
         mode=mode,

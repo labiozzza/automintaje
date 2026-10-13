@@ -363,8 +363,15 @@ def montage_plan(options: Dict[str, Any]) -> List[Stage]:
         camera_mode = str(raw_mode).lower()
     camera_on = camera_mode in {"hold", "live"}
     zoom_stage = bool(options.get("autozoom")) or camera_on
+    obj = options.get("object_tracking") or {}
+    object_on = bool(obj.get("enabled")) and bool(obj.get("session_id"))
+    if object_on:
+        zoom_stage = True
     if zoom_stage:
         stages.append(Stage("faces", "Отслеживание лица", 15.0))
+    if object_on:
+        stages.append(Stage("object", "Камера по объекту", 6.0))
+    if zoom_stage:
         stages.append(Stage("zoom", "Автозум и камера", 12.0))
     if options.get("subtitles", True):
         stages.append(Stage("subtitles", "Создание субтитров", 20.0))

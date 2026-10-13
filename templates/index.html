@@ -722,6 +722,9 @@ select option { background: var(--surface2); }
 .keybar-marker.active { background: var(--accent); border-color: #1d5b4e; }
 .keybar-marker.anim { background: #FFD54F; border-color: #755c00; }
 .overlay-preview-layer { position:absolute; inset:0; z-index:6; pointer-events:none; overflow:hidden; }
+.ot-select-layer { position:absolute; inset:0; z-index:20; display:block; cursor:crosshair; touch-action:none; }
+.ot-select-layer canvas { position:absolute; inset:0; width:100%; height:100%; }
+.ot-select-hint { position:absolute; left:8px; top:8px; background:rgba(0,0,0,.7); color:#fff; font-size:12px; padding:4px 10px; border-radius:6px; pointer-events:none; }
 .timeline-animation-preview {
   display:none; position:absolute; left:10%; right:10%; bottom:8px; height:48px;
   pointer-events:none; z-index:5;
@@ -1124,6 +1127,10 @@ select option { background: var(--surface2); }
               <div class="sub-drag-tip">Левая грань X <span id="projectPreviewSubX">0.12</span> • Y <span id="projectPreviewSubY">0.78</span> • Размер <span id="projectPreviewSubScale">1.00</span></div>
               <div class="sub-card" id="projectPreviewSubCard"><span class="sub-card-text" id="projectPreviewSubText"></span></div>
             </div>
+            <div class="ot-select-layer" id="otSelectLayer" style="display:none">
+              <canvas id="otSelectCanvas"></canvas>
+              <div class="ot-select-hint" id="otSelectHint">Кликните по объекту</div>
+            </div>
           </div>
           <div class="timebar-scale">
             <span id="projectPreviewCur">00:00.000</span>
@@ -1252,9 +1259,92 @@ select option { background: var(--surface2); }
       </div>
     </section>
 
-    <!-- ===== 5. Наложения и анимации ===== -->
+    <!-- ===== 5. Отслеживание объекта ===== -->
+    <section class="montage-section" aria-labelledby="secObjectTrack">
+      <h2 class="section-eyebrow" id="secObjectTrack"><span class="section-num">5</span> Отслеживание объекта</h2>
+      <div class="card">
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Отслеживание произвольного объекта (SAM 2.1)</div>
+            <div class="toggle-desc">Кликните по объекту на превью — камера поведёт его. Выключено по умолчанию.</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="otEnabled" onchange="otToggle()">
+            <div class="toggle-slider"></div>
+          </label>
+        </div>
+        <div id="otBody" style="display:none;margin-top:12px">
+          <div class="dependency-note" id="otModelStatus">Проверка модели...</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
+            <button type="button" class="btn" id="otSelectBtn" onclick="otEnterSelect()">Выбрать объект</button>
+            <button type="button" class="btn" id="otExitSelectBtn" style="display:none" onclick="otExitSelect()">Готово</button>
+          </div>
+          <div id="otSelectTools" style="display:none;margin-bottom:10px">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+              <button type="button" class="btn" id="otModePos" onclick="otSetClickMode('pos')">+ Точка объекта</button>
+              <button type="button" class="btn" id="otModeNeg" onclick="otSetClickMode('neg')">− Исключить область</button>
+              <button type="button" class="btn" id="otModeBox" onclick="otSetClickMode('box')">Прямоугольник</button>
+              <button type="button" class="btn" onclick="otUndoPoint()">Отменить точку</button>
+              <button type="button" class="btn" onclick="otResetPoints()">Сброс</button>
+            </div>
+            <div class="dependency-note" id="otSelectStatus">Остановите видео и кликните по объекту.</div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+              <button type="button" class="btn" id="otConfirmObjBtn" disabled onclick="otConfirmObject()">Подтвердить объект</button>
+            </div>
+          </div>
+          <div id="otTrackTools" style="display:none">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:8px">
+              <div class="setting-group"><label>Начало, сек</label><input type="number" id="otStartSec" min="0" step="0.5" value="0" style="width:90px"></div>
+              <div class="setting-group"><label>Конец, сек</label><input type="number" id="otEndSec" min="0" step="0.5" value="0" style="width:90px"></div>
+              <div class="setting-group"><label>Частота анализа</label>
+                <select id="otFps"><option value="3">3 кадр/с (быстро)</option><option value="6" selected>6 кадр/с</option><option value="10">10 кадр/с (точно)</option></select>
+              </div>
+              <button type="button" class="btn" onclick="otEstimate()">Оценить время</button>
+            </div>
+            <div class="dependency-note" id="otEstimateNote"></div>
+            <div style="display:flex;gap:8px;margin:8px 0">
+              <button type="button" class="btn" id="otTrackBtn" disabled onclick="otStartTrack()">Отследить объект</button>
+              <button type="button" class="btn" id="otCancelBtn" style="display:none" onclick="otCancelTrack()">Остановить</button>
+            </div>
+            <div class="progress-wrap" id="otProgressWrap" style="display:none">
+              <div class="progress-bar"><div class="progress-fill" id="otProgressFill" style="width:0%"></div></div>
+              <div class="dependency-note" id="otProgressText"></div>
+            </div>
+            <div id="otPreviewBox" style="display:none;margin-top:10px">
+              <div class="toggle-label">Предпросмотр отслеживания</div>
+              <img id="otPreviewImg" alt="Предпросмотр отслеживания" style="max-width:100%;border-radius:8px;margin:6px 0" onclick="otPreviewImgClick(event)">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <button type="button" class="btn" onclick="otPreviewStep(-1)">←</button>
+                <input type="range" id="otPreviewSlider" min="0" max="0" value="0" style="flex:1" oninput="otPreviewShow(this.value)">
+                <button type="button" class="btn" onclick="otPreviewStep(1)">→</button>
+                <button type="button" class="btn" onclick="otPreviewLoss(-1)">Потеря ←</button>
+                <button type="button" class="btn" onclick="otPreviewLoss(1)">→ Потеря</button>
+              </div>
+              <div class="dependency-note" id="otLossNote"></div>
+              <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+                <button type="button" class="btn" id="otCorrectBtn" onclick="otEnterCorrect()">Исправить на этом кадре</button>
+                <button type="button" class="btn" id="otConfirmTrajBtn" onclick="otConfirmTrajectory()">Подтвердить для монтажа</button>
+              </div>
+            </div>
+            <div style="margin-top:10px">
+              <div class="toggle-label">Камера по объекту</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
+                <div class="setting-group"><label>Режим</label>
+                  <select id="otCamMode"><option value="object_hold">Удержание объекта</option><option value="object_live" selected>Живая камера — объект</option></select>
+                </div>
+                <div class="setting-group"><label>Сила, %</label><input type="number" id="otFollow" min="0" max="100" value="30" style="width:70px"></div>
+                <div class="setting-group"><label>Инерция, сек</label><input type="number" id="otLag" min="0" max="3" step="0.1" value="0.4" style="width:70px"></div>
+                <div class="setting-group"><label>Мин. зум, %</label><input type="number" id="otMinZoom" min="5" max="25" value="12" style="width:70px"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 6. Наложения и анимации ===== -->
     <section class="montage-section" aria-labelledby="secOverlays">
-      <h2 class="section-eyebrow" id="secOverlays"><span class="section-num">5</span> Наложения и анимации</h2>
+      <h2 class="section-eyebrow" id="secOverlays"><span class="section-num">6</span> Наложения и анимации</h2>
 
       <div class="results-container" id="overlaysCard">
         <div class="card">
@@ -1297,7 +1387,7 @@ select option { background: var(--surface2); }
 
     <!-- ===== 6. Дополнительные настройки ===== -->
     <section class="montage-section" aria-labelledby="secExtra">
-      <h2 class="section-eyebrow" id="secExtra"><span class="section-num">6</span> Дополнительные настройки</h2>
+      <h2 class="section-eyebrow" id="secExtra"><span class="section-num">7</span> Дополнительные настройки</h2>
       <div class="card">
         <div class="toggle-row">
           <div>
@@ -1345,7 +1435,7 @@ select option { background: var(--surface2); }
 
     <!-- ===== 7. Обработка и прогресс ===== -->
     <section class="montage-section" aria-labelledby="secProcess">
-      <h2 class="section-eyebrow" id="secProcess"><span class="section-num">7</span> Обработка и прогресс</h2>
+      <h2 class="section-eyebrow" id="secProcess"><span class="section-num">8</span> Обработка и прогресс</h2>
       <div class="card">
         <button class="btn btn-primary" id="montageStartBtn" disabled onclick="startMontage()">Запустить монтаж</button>
       </div>
@@ -1378,7 +1468,7 @@ select option { background: var(--surface2); }
 
     <!-- ===== 8. Готовый ролик и публикация ===== -->
     <section class="montage-section" aria-labelledby="secResult">
-      <h2 class="section-eyebrow" id="secResult"><span class="section-num">8</span> Готовый ролик и публикация</h2>
+      <h2 class="section-eyebrow" id="secResult"><span class="section-num">9</span> Готовый ролик и публикация</h2>
 
       <div class="results-container" id="montageResultsCard">
         <div class="card">
@@ -2796,6 +2886,395 @@ function updateCameraModeUI() {
   updateAutozoomDependencyNote();
 }
 
+// ========== OBJECT TRACKING (SAM 2.1, optional) ==========
+let otSessionId = null, otVideoMeta = null, otSelecting = false, otCorrecting = false;
+let otClickMode = 'pos', otPoints = [], otBox = null, otBoxStart = null, otMaskRle = null;
+let otSampleCount = 0, otLossIdx = [], otPollTimer = null, otEstimateData = null;
+let otConfirmed = false;
+
+function otNote(id, text, show = true) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('active', show && !!text);
+}
+
+async function otToggle() {
+  const on = document.getElementById('otEnabled').checked;
+  document.getElementById('otBody').style.display = on ? '' : 'none';
+  if (on) {
+    try {
+      const res = await fetch('/api/object-tracking/status');
+      const st = await res.json();
+      otNote('otModelStatus', st.ok
+        ? `Модель готова (${st.checkpoint.split('/').pop()}, устройство: ${st.device})`
+        : `Модель недоступна: ${st.reason || 'неизвестная причина'}`);
+    } catch (e) {
+      otNote('otModelStatus', 'Статус модели получить не удалось: ' + e.message);
+    }
+  } else if (otSelecting) {
+    otExitSelect();
+  }
+}
+
+async function otEnsureSession() {
+  if (otSessionId) return otSessionId;
+  const form = new FormData();
+  // NB: bare globals, NOT window.* (declared with let in this script).
+  if (typeof selectedProjectId !== 'undefined' && selectedProjectId) {
+    form.append('project_id', selectedProjectId);
+  } else if (typeof montageVideoFile !== 'undefined' && montageVideoFile) {
+    form.append('video', montageVideoFile);
+  } else if (typeof montageJobId !== 'undefined' && montageJobId) {
+    form.append('montage_job_id', montageJobId);
+  } else {
+    throw new Error('Нет исходника: выберите проект или загрузите видео');
+  }
+  const res = await fetch('/api/object-tracking/sessions', {method: 'POST', body: form});
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+  otSessionId = data.session_id;
+  otVideoMeta = data.video_meta;
+  return otSessionId;
+}
+
+function otVideoMapping() {
+  const v = document.getElementById('projectPreviewVideo');
+  const rect = v.getBoundingClientRect();
+  const vw = (otVideoMeta && otVideoMeta.width) || v.videoWidth;
+  const vh = (otVideoMeta && otVideoMeta.height) || v.videoHeight;
+  const s = Math.min(rect.width / vw, rect.height / vh);
+  const dw = vw * s, dh = vh * s;
+  return {x: rect.left + (rect.width - dw) / 2, y: rect.top + (rect.height - dh) / 2, w: dw, h: dh};
+}
+
+function otSizeCanvas() {
+  const v = document.getElementById('projectPreviewVideo');
+  const canvas = document.getElementById('otSelectCanvas');
+  const rect = v.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.round(rect.width * dpr));
+  canvas.height = Math.max(1, Math.round(rect.height * dpr));
+}
+
+async function otEnterSelect() {
+  try {
+    await otEnsureSession();
+  } catch (e) { alert(e.message); return; }
+  const v = document.getElementById('projectPreviewVideo');
+  v.pause();
+  otSelecting = true;
+  document.getElementById('otSelectLayer').style.display = 'block';
+  document.getElementById('otSelectTools').style.display = '';
+  document.getElementById('otSelectBtn').style.display = 'none';
+  document.getElementById('otExitSelectBtn').style.display = '';
+  otSizeCanvas();
+  otNote('otSelectStatus', 'Кликните по объекту. Зелёная — точка объекта, красная — исключить.');
+}
+
+function otExitSelect() {
+  otSelecting = false;
+  otCorrecting = false;
+  document.getElementById('otSelectLayer').style.display = 'none';
+  document.getElementById('otSelectBtn').style.display = '';
+  document.getElementById('otExitSelectBtn').style.display = 'none';
+}
+
+function otSetClickMode(mode) {
+  otClickMode = mode;
+  otBoxStart = null;
+  for (const id of ['otModePos', 'otModeNeg', 'otModeBox'])
+    document.getElementById(id).style.borderColor = '';
+  document.getElementById({pos: 'otModePos', neg: 'otModeNeg', box: 'otModeBox'}[mode]).style.borderColor = 'var(--accent)';
+  otNote('otSelectStatus', mode === 'pos' ? 'Кликните по объекту.' : mode === 'neg' ? 'Кликните по области, которую надо исключить.' : 'Протяните прямоугольник вокруг объекта.');
+}
+
+function otCanvasPos(event) {
+  const canvas = document.getElementById('otSelectCanvas');
+  const rect = canvas.getBoundingClientRect();
+  const map = otVideoMapping();
+  const fx = (event.clientX - map.x) / map.w;
+  const fy = (event.clientY - map.y) / map.h;
+  if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return null;
+  return {x: fx, y: fy};
+}
+
+function otDrawOverlay() {
+  const canvas = document.getElementById('otSelectCanvas');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const map = otVideoMapping();
+  const crect = canvas.getBoundingClientRect();
+  const sx = canvas.width / crect.width, sy = canvas.height / crect.height;
+  const X = nx => (map.x - crect.left + nx * map.w) * sx;
+  const Y = ny => (map.y - crect.top + ny * map.h) * sy;
+  if (otMaskRle && otMaskRle.counts) {
+    const [mh, mw] = otMaskRle.size;
+    const img = ctx.createImageData(mw, mh);
+    let pos = 0, val = 0;
+    for (const run of otMaskRle.counts) {
+      for (let k = 0; k < run && pos < mw * mh; k++, pos++) {
+        if (val) { img.data[pos * 4] = 0; img.data[pos * 4 + 1] = 255; img.data[pos * 4 + 2] = 0; img.data[pos * 4 + 3] = 90; }
+      }
+      val = 1 - val;
+    }
+    const off = document.createElement('canvas');
+    off.width = mw; off.height = mh;
+    off.getContext('2d').putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(off, X(0), Y(0), map.w * sx, map.h * sy);
+  }
+  for (const p of otPoints) {
+    ctx.beginPath();
+    ctx.arc(X(p[0]), Y(p[1]), 6 * dpr, 0, 7);
+    ctx.fillStyle = p[2] >= 0 ? '#00ff00' : '#ff0000';
+    ctx.fill();
+    ctx.lineWidth = 2 * dpr;
+    ctx.strokeStyle = '#000';
+    ctx.stroke();
+  }
+  if (otBox) {
+    ctx.strokeStyle = '#00ff00';
+    ctx.lineWidth = 2 * dpr;
+    ctx.strokeRect(X(otBox.x0), Y(otBox.y0), (otBox.x1 - otBox.x0) * map.w * sx, (otBox.y1 - otBox.y0) * map.h * sy);
+  }
+  if (otBoxStart && otBoxStart.cur) {
+    ctx.strokeStyle = '#00ff00';
+    ctx.lineWidth = 2 * dpr;
+    ctx.strokeRect(X(Math.min(otBoxStart.x, otBoxStart.cur.x)), Y(Math.min(otBoxStart.y, otBoxStart.cur.y)),
+      Math.abs(otBoxStart.cur.x - otBoxStart.x) * map.w * sx, Math.abs(otBoxStart.cur.y - otBoxStart.y) * map.h * sy);
+  }
+}
+
+function otLayerDown(event) {
+  if (!otSelecting) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const p = otCanvasPos(event);
+  if (!p) return;
+  if (otClickMode === 'box') {
+    otBoxStart = {x: p.x, y: p.y, cur: null};
+    const move = ev => { otBoxStart.cur = otCanvasPos(ev) || otBoxStart.cur; otDrawOverlay(); };
+    const up = ev => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      const q = otCanvasPos(ev);
+      if (q && Math.abs(q.x - otBoxStart.x) > 0.01 && Math.abs(q.y - otBoxStart.y) > 0.01) {
+        otBox = {x0: Math.min(otBoxStart.x, q.x), y0: Math.min(otBoxStart.y, q.y), x1: Math.max(otBoxStart.x, q.x), y1: Math.max(otBoxStart.y, q.y)};
+        otDrawOverlay();
+        otSendSegment();
+      }
+      otBoxStart = null;
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    return;
+  }
+  otPoints.push([p.x, p.y, otClickMode === 'pos' ? 1 : -1]);
+  otDrawOverlay();
+  otSendSegment();
+}
+
+async function otCurrentTime() {
+  return document.getElementById('projectPreviewVideo').currentTime || 0;
+}
+
+let otSegmentBusy = false, otSegmentDirty = false;
+
+async function otSendSegment() {
+  // Coalesce rapid clicks: one SAM run per pause, not per click.  Each run
+  // re-encodes the whole frame (~5-30s on MPS), so queueing them freezes UI.
+  if (otSegmentBusy) {
+    otSegmentDirty = true;
+    otNote('otSelectStatus', 'Точки приняты, жду конца сегментации...');
+    return;
+  }
+  otSegmentBusy = true;
+  document.getElementById('otSelectLayer').style.cursor = 'progress';
+  try {
+    do {
+      otSegmentDirty = false;
+      otNote('otSelectStatus', 'Сегментация...');
+      const res = await fetch(`/api/object-tracking/sessions/${otSessionId}/segment`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({time: await otCurrentTime(), prompts: [{frame_idx: 0, points: otPoints, box: otBox}]})
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+      otMaskRle = data.rle || null;
+      otDrawOverlay();
+      const m = data.mask || {};
+      otNote('otSelectStatus', m && m.area > 0
+        ? `Маска: центр (${(m.x || 0).toFixed(2)}, ${(m.y || 0).toFixed(2)}), площадь ${(100 * (m.area || 0)).toFixed(1)}%, score ${(m.score || 0).toFixed(2)}. Уточните точками или подтвердите.`
+        : 'Объект не выделен — кликните точнее.');
+      document.getElementById('otConfirmObjBtn').disabled = !(m && m.area > 0);
+    } while (otSegmentDirty);
+  } catch (e) {
+    otNote('otSelectStatus', 'Ошибка сегментации: ' + e.message);
+  } finally {
+    otSegmentBusy = false;
+    document.getElementById('otSelectLayer').style.cursor = '';
+  }
+}
+
+function otUndoPoint() {
+  otPoints.pop();
+  otMaskRle = null;
+  otDrawOverlay();
+  if (otPoints.length || otBox) otSendSegment();
+  else otNote('otSelectStatus', 'Кликните по объекту.');
+}
+
+function otResetPoints() {
+  otPoints = [];
+  otBox = null;
+  otMaskRle = null;
+  otDrawOverlay();
+  document.getElementById('otConfirmObjBtn').disabled = true;
+  otNote('otSelectStatus', 'Кликните по объекту.');
+}
+
+async function otConfirmObject() {
+  try {
+    const res = await fetch(`/api/object-tracking/sessions/${otSessionId}/confirm-object`, {method: 'POST'});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+    otExitSelect();
+    document.getElementById('otTrackTools').style.display = '';
+    otNote('otEstimateNote', 'Объект подтверждён. Задайте диапазон и оцените время.');
+  } catch (e) { alert(e.message); }
+}
+
+async function otEstimate() {
+  const dur = document.getElementById('projectPreviewVideo').duration || 0;
+  const fps = (otVideoMeta && otVideoMeta.fps) || 30;
+  const startF = Math.max(0, Math.round((parseFloat(document.getElementById('otStartSec').value) || 0) * fps));
+  let endF = Math.round((parseFloat(document.getElementById('otEndSec').value) || 0) * fps);
+  if (!endF) endF = Math.max(0, Math.round(dur * fps) - 1);
+  const afps = parseFloat(document.getElementById('otFps').value) || 6;
+  const res = await fetch(`/api/object-tracking/sessions/${otSessionId}/estimate?start_frame=${startF}&end_frame=${endF}&analysis_fps=${afps}`);
+  const data = await res.json();
+  otEstimateData = Object.assign(data, {analysis_fps: afps});
+  const mins = Math.floor(data.estimated_seconds / 60), secs = data.estimated_seconds % 60;
+  otNote('otEstimateNote', `Кадров анализа: ${data.analysis_frames} ×2 направления. Примерно: ${mins} мин ${secs} сек (устройство: ${data.device || '?'}). Нажмите «Отследить объект» для запуска.`);
+  document.getElementById('otTrackBtn').disabled = false;
+}
+
+async function otStartTrack() {
+  if (!otEstimateData) { await otEstimate(); }
+  const res = await fetch(`/api/object-tracking/sessions/${otSessionId}/track`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({start_frame: otEstimateData.span.start_frame, end_frame: otEstimateData.span.end_frame, analysis_fps: otEstimateData.analysis_fps, confirmed_estimate: true})
+  });
+  const data = await res.json();
+  if (!res.ok) { alert(data.detail || ('HTTP ' + res.status)); return; }
+  document.getElementById('otProgressWrap').style.display = '';
+  document.getElementById('otCancelBtn').style.display = '';
+  document.getElementById('otTrackBtn').disabled = true;
+  otPollProgress();
+}
+
+async function otPollProgress() {
+  if (otPollTimer) clearTimeout(otPollTimer);
+  try {
+    const res = await fetch(`/api/object-tracking/sessions/${otSessionId}/progress`);
+    const p = await res.json();
+    document.getElementById('otProgressFill').style.width = p.samples ? Math.min(100, Math.round(100 * p.samples / Math.max(1, p.samples + (p.running ? 50 : 0)))) + '%' : '0%';
+    otNote('otProgressText', `Статус: ${p.status}, сэмплов: ${p.samples} (видимых: ${p.visible}, проблемных: ${p.suspicious})${p.running ? ' — анализ идёт...' : ''}`);
+    if (p.running) {
+      otPollTimer = setTimeout(otPollProgress, 3000);
+    } else {
+      document.getElementById('otCancelBtn').style.display = 'none';
+      document.getElementById('otTrackBtn').disabled = false;
+      if (['tracked', 'corrected', 'confirmed'].includes(p.status)) otLoadPreview();
+    }
+  } catch (e) {
+    otPollTimer = setTimeout(otPollProgress, 5000);
+  }
+}
+
+async function otCancelTrack() {
+  await fetch(`/api/object-tracking/sessions/${otSessionId}/cancel`, {method: 'POST'});
+  otPollProgress();
+}
+
+async function otLoadPreview() {
+  document.getElementById('otPreviewBox').style.display = '';
+  const res = await fetch(`/api/object-tracking/sessions/${otSessionId}/progress`);
+  const p = await res.json();
+  otSampleCount = p.samples || 0;
+  otLossIdx = p.loss_idx || [];
+  const slider = document.getElementById('otPreviewSlider');
+  slider.max = Math.max(0, otSampleCount - 1);
+  slider.value = 0;
+  otNote('otLossNote', otLossIdx.length ? `Проблемных участков сэмплов: ${otLossIdx.length} (первые индексы: ${otLossIdx.slice(0, 8).join(', ')})` : 'Потерь не обнаружено.');
+  otPreviewShow(0);
+}
+
+async function otPreviewShow(n) {
+  n = Math.max(0, Math.min(otSampleCount - 1, Number(n) || 0));
+  document.getElementById('otPreviewSlider').value = n;
+  document.getElementById('otPreviewImg').src = `/api/object-tracking/sessions/${otSessionId}/preview-frame?n=${n}&t=${Date.now()}`;
+}
+
+function otPreviewStep(d) {
+  otPreviewShow(Number(document.getElementById('otPreviewSlider').value) + d);
+}
+
+function otPreviewLoss(d) {
+  const cur = Number(document.getElementById('otPreviewSlider').value);
+  const candidates = d > 0 ? otLossIdx.filter(i => i > cur) : otLossIdx.filter(i => i < cur).reverse();
+  if (candidates.length) otPreviewShow(candidates[0]);
+}
+
+function otEnterCorrect() {
+  otCorrecting = true;
+  document.getElementById('otSelectHint').textContent = '';
+  otNote('otLossNote', document.getElementById('otLossNote').textContent + ' Режим исправления: кликните по правильному объекту на картинке предпросмотра.');
+  document.getElementById('otPreviewImg').style.outline = '2px solid var(--accent)';
+}
+
+async function otPreviewImgClick(event) {
+  if (!otCorrecting) return;
+  const img = document.getElementById('otPreviewImg');
+  const rect = img.getBoundingClientRect();
+  const fx = (event.clientX - rect.left) / rect.width;
+  const fy = (event.clientY - rect.top) / rect.height;
+  if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
+  otCorrecting = false;
+  img.style.outline = '';
+  const n = Number(document.getElementById('otPreviewSlider').value);
+  if (!confirm('Добавить коррекцию на этом кадре и пересчитать окрестность ±15 сек?')) return;
+  const res = await fetch(`/api/object-tracking/sessions/${otSessionId}/correct`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({sample_idx: n, prompts: [{frame_idx: 0, points: [[fx, fy, 1]]}], radius_seconds: 15})
+  });
+  const data = await res.json();
+  if (!res.ok) { alert(data.detail || ('HTTP ' + res.status)); return; }
+  document.getElementById('otProgressWrap').style.display = '';
+  otPollProgress();
+}
+
+async function otConfirmTrajectory() {
+  const cam = {
+    mode: document.getElementById('otCamMode').value,
+    follow_strength: (parseFloat(document.getElementById('otFollow').value) || 30) / 100,
+    lag_seconds: parseFloat(document.getElementById('otLag').value) || 0.4,
+    min_zoom: 1 + (parseFloat(document.getElementById('otMinZoom').value) || 12) / 100
+  };
+  try {
+    const res = await fetch(`/api/object-tracking/sessions/${otSessionId}/confirm-trajectory`, {method: 'POST'});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || ('HTTP ' + res.status));
+    otConfirmed = true;
+    window.otConfirmedSession = {session_id: otSessionId, camera: cam};
+    alert('Траектория подтверждена и будет использована в монтаже.');
+  } catch (e) { alert(e.message); }
+}
+
+document.getElementById('otSelectLayer').addEventListener('pointerdown', otLayerDown);
+
 function updateAutozoomDependencyNote() {
   const note = document.getElementById('autozoomDependencyNote');
   if (!note) return;
@@ -3017,6 +3496,16 @@ async function startMontage() {
   form.append('lag_seconds', document.getElementById('lagSeconds').value || 0.4);
   form.append('min_zoom', 1 + (parseFloat(document.getElementById('minZoom').value || 12) / 100));
   form.append('camera_wobble', document.getElementById('cameraWobble').checked);
+  const otUse = document.getElementById('otEnabled').checked && window.otConfirmedSession;
+  form.append('object_tracking_enabled', !!otUse);
+  if (otUse) {
+    form.append('ot_session_id', window.otConfirmedSession.session_id);
+    const otCam = window.otConfirmedSession.camera || {};
+    form.append('ot_camera_mode', otCam.mode || 'object_live');
+    form.append('ot_follow_strength', (otCam.follow_strength !== undefined ? otCam.follow_strength * 100 : 30));
+    form.append('ot_lag_seconds', otCam.lag_seconds !== undefined ? otCam.lag_seconds : 0.4);
+    form.append('ot_min_zoom', otCam.min_zoom !== undefined ? otCam.min_zoom : 1.12);
+  }
   form.append('autozoom', document.getElementById('montageAutozoom').checked);
   form.append('prepare_mirrored', document.getElementById('montagePrepareMirrored').checked);
   form.append('blur_banned_words', document.getElementById('montageBlurBannedWords').checked);

@@ -1009,6 +1009,9 @@ from montage.secrets_env import load_secrets_env
 load_secrets_env()
 from montage import engine as montage_engine
 from montage import cover_generator
+from montage.object_tracking import service as ot_service
+from montage.object_tracking import storage as ot_storage
+from montage.object_tracking import coords as ot_coords
 from montage.progress_tracker import failed_snapshot, ProgressTracker, Stage
 
 
@@ -1331,7 +1334,7 @@ _MONTAGE_SIGNATURE_KEYS = (
     "blur_banned_words", "edge_mode", "overlays", "animation",
     "zoom_timeline_override",
     "camera_mode", "follow_strength", "lag_seconds", "min_zoom",
-    "camera_wobble",
+    "camera_wobble", "object_tracking",
 )
 
 
@@ -1356,6 +1359,51 @@ def _validate_float_range(raw: Any, low: float, high: float,
     if not (low <= value <= high):
         raise HTTPException(400, f"{name} должен быть от {low} до {high}")
     return value
+
+
+def _validate_object_tracking(enabled: Any, session_id: Any, camera_mode: Any,
+                              follow: Any, lag: Any, min_zoom: Any) -> dict:
+    """Validate Object Tracking params; requires a confirmed trajectory."""
+    if not enabled:
+        return {"enabled": False}
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        raise HTTPException(400, "Включите отслеживание объекта и подтвердите траекторию")
+    root = ot_service.sessions_root(MONTAGE_WORK)
+    session_dir = ot_service.get_session(root, session_id)
+    if session_dir is None:
+        raise HTTPException(400, "Сессия отслеживания не найдена")
+    selection = ot_storage.read_selection(session_dir) or {}
+    if selection.get("status") not in {"tracked", "corrected", "confirmed"}:
+        raise HTTPException(400, "Завершите анализ и подтвердите траекторию объекта")
+    samples = [s for s in ot_storage.iter_samples(session_dir)
+               if isinstance(s, dict) and s.get("visible")]
+    if not samples:
+        raise HTTPException(400, "В траектории объекта нет видимых кадров")
+    if selection.get("status") != "confirmed":
+        selection["status"] = "confirmed"
+        ot_storage.write_selection(session_dir, selection)
+    mode = str(camera_mode or "object_live")
+    if mode not in {"object_hold", "object_live"}:
+        raise HTTPException(400, "Режим камеры объекта: object_hold или object_live")
+    samples = [s for s in ot_storage.iter_samples(session_dir) if isinstance(s, dict)]
+    blob = json.dumps(
+        [{"f": s.get("frame"), "x": s.get("x"), "y": s.get("y"),
+          "v": bool(s.get("visible")), "s": bool(s.get("suspicious"))}
+         for s in samples],
+        ensure_ascii=False, sort_keys=True, default=str)
+    return {
+        "enabled": True,
+        "session_id": session_id,
+        "track_hash": hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16],
+        "camera": {
+            "mode": mode,
+            "follow_strength": _validate_float_range(follow, 0.0, 100.0, 30.0,
+                                                     "ot_follow_strength") / 100.0,
+            "lag_seconds": _validate_float_range(lag, 0.0, 3.0, 0.4, "ot_lag_seconds"),
+            "min_zoom": _validate_float_range(min_zoom, 1.05, 1.25, 1.12, "ot_min_zoom"),
+        },
+    }
 
 
 def _montage_signature(params: dict) -> str:
@@ -2906,6 +2954,12 @@ async def start_montage(
     lag_seconds: float = Form(0.4),
     min_zoom: float = Form(1.12),
     camera_wobble: bool = Form(False),
+    object_tracking_enabled: bool = Form(False),
+    ot_session_id: str = Form(""),
+    ot_camera_mode: str = Form("object_live"),
+    ot_follow_strength: float = Form(30.0),
+    ot_lag_seconds: float = Form(0.4),
+    ot_min_zoom: float = Form(1.12),
     blur_banned_words: bool = Form(False),
     subtitles: bool = Form(True),
     bigpickle: bool = Form(True),
@@ -3125,6 +3179,9 @@ async def start_montage(
         "min_zoom": _validate_float_range(
             min_zoom, 1.05, 1.25, 1.12, "min_zoom"),
         "camera_wobble": bool(camera_wobble),
+        "object_tracking": _validate_object_tracking(
+            object_tracking_enabled, ot_session_id, ot_camera_mode,
+            ot_follow_strength, ot_lag_seconds, ot_min_zoom),
         "mirror_horizontal": False,
         "blur_banned_words": blur_banned_words,
         "subtitles": subtitles,
@@ -3399,6 +3456,558 @@ async def cancel_montage(job_id: str):
                 PROJECTS.pop(auto_project_id, None)
                 _save_projects()
     return {"job_id": job_id, "cancelled": True, "wiped": True}
+
+
+# --------------------------------------------------------------------------
+# Object Tracking (optional module, off by default).
+#
+# Sessions live under ``montage_work/object_tracking_sessions/<id>/`` and are
+# bound to an exact source video via fingerprint.  Heavy SAM work runs in the
+# isolated venv as a subprocess (see montage/object_tracking/service.py), so
+# the event loop is never blocked and the main env stays untouched.
+# --------------------------------------------------------------------------
+
+OT_TASKS: dict[str, set] = {}
+OT_WORKER_SEM: Optional[asyncio.Semaphore] = None  # one SAM worker at a time (8GB RAM)
+
+
+async def _ot_run_worker_guarded(session_dir, task, on_line=None, timeout=None):
+    """Run the SAM worker under a global semaphore (never two at once)."""
+    global OT_WORKER_SEM
+    if OT_WORKER_SEM is None:
+        OT_WORKER_SEM = asyncio.Semaphore(1)
+    async with OT_WORKER_SEM:
+        return await asyncio.to_thread(ot_service.run_worker, session_dir,
+                                       task, on_line, timeout)
+
+
+def _track_ot_task(session_id: str, coro) -> "asyncio.Task":
+    task = asyncio.create_task(coro)
+    tasks = OT_TASKS.setdefault(session_id, set())
+    tasks.add(task)
+
+    def _forget(done_task: "asyncio.Task") -> None:
+        tasks.discard(done_task)
+        if not tasks:
+            OT_TASKS.pop(session_id, None)
+
+    task.add_done_callback(_forget)
+    return task
+
+
+def _ot_session_or_404(session_id: str):
+    from pathlib import Path as _Path
+    root = ot_service.sessions_root(MONTAGE_WORK)
+    session_dir = ot_service.get_session(root, session_id)
+    if session_dir is None:
+        raise HTTPException(404, "Сессия отслеживания не найдена")
+    return session_dir
+
+
+def _ot_resolve_source(montage_job_id=None, project_id=None):
+    """Resolve a session source video from a job or project id (no raw paths)."""
+    if montage_job_id:
+        job = jobs.get(montage_job_id)
+        if job is None or job.get("kind") != "montage":
+            raise HTTPException(404, "Montage job not found")
+        path = Path(str(job.get("video_path") or ""))
+        roots = [UPLOAD_DIR, MONTAGE_WORK]
+    elif project_id:
+        project = PROJECTS.get(project_id)
+        if project is None:
+            raise HTTPException(404, "Проект не найден")
+        path = Path(str(project.get("video_path") or ""))
+        roots = [UPLOAD_DIR, MONTAGE_WORK, Path(str(project.get("video_path") or "")).parent]
+    else:
+        raise HTTPException(400, "Укажите montage_job_id или project_id")
+    resolved = ot_service.allowed_source(path, [Path(r) for r in roots])
+    if resolved is None:
+        raise HTTPException(400, "Исходное видео недоступно для отслеживания")
+    return resolved
+
+
+def _ot_probe_rotation(video: Path) -> int:
+    """Display rotation in tag convention (90 -> CCW like the engine).
+
+    Uses a dedicated ffprobe call: the shared engine probe does not expose
+    side-data rotation, and missing it silently mismatches selection coords
+    with browser display and SAM analysis frames (both auto-rotate).
+    """
+    try:
+        proc = subprocess.run(
+            [shutil.which("ffprobe") or "ffprobe", "-v", "error",
+             "-show_entries", "stream=codec_type:stream_tags=rotate",
+             "-show_entries", "stream_side_data=rotation",
+             "-of", "json", str(video)],
+            capture_output=True, text=True, timeout=60)
+        probe = json.loads(proc.stdout or "{}")
+    except Exception:
+        return 0
+    for stream in probe.get("streams") or []:
+        if stream.get("codec_type") != "video":
+            continue
+        tags = stream.get("tags") or {}
+        if tags.get("rotate") not in (None, ""):
+            try:
+                return int(float(str(tags["rotate"]))) % 360
+            except (TypeError, ValueError):
+                pass
+        for side in list(stream.get("side_data_list") or []) + list(stream.get("side_data") or []):
+            if isinstance(side, dict) and side.get("rotation") not in (None, ""):
+                try:
+                    # Display-matrix sign is opposite to the rotate tag.
+                    return int(round(float(str(side["rotation"])))) % 360
+                except (TypeError, ValueError):
+                    pass
+    return 0
+
+
+def _ot_apply_rotation(frame, rotation: int):
+    import cv2
+    if rotation == 90:
+        return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    if rotation == 270:
+        return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    if rotation == 180:
+        return cv2.rotate(frame, cv2.ROTATE_180)
+    return frame
+
+
+def _ot_read_upright_frame(video: Path, frame_idx: int):
+    """Read a frame in display (upright) orientation, matching the preview."""
+    import cv2
+    cap = cv2.VideoCapture(str(video))
+    if not cap.isOpened():
+        raise HTTPException(400, "Не удалось открыть видео")
+    try:
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        frame_idx = max(0, min(frame_idx, max(0, total - 1)))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ok, frame = cap.read()
+    finally:
+        cap.release()
+    if not ok or frame is None:
+        raise HTTPException(400, "Не удалось прочитать кадр")
+    rotation = _ot_probe_rotation(video)
+    frame = _ot_apply_rotation(frame, rotation)
+    height, width = frame.shape[:2]
+    return frame, {"width": width, "height": height, "rotation": rotation}
+
+
+def _ot_encode_jpeg(frame, quality: int = 82) -> bytes:
+    import cv2
+    ok, encoded = cv2.imencode(".jpg", frame,
+                               [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    if not ok:
+        raise HTTPException(500, "Не удалось закодировать кадр")
+    return bytes(encoded)
+
+
+@app.get("/api/object-tracking/status")
+async def object_tracking_status():
+    return ot_service.sam_status()
+
+
+@app.post("/api/object-tracking/sessions")
+async def object_tracking_create_session(
+    montage_job_id: str = Form(""),
+    project_id: str = Form(""),
+    analysis_fps: float = Form(6.0),
+    video: Optional[UploadFile] = File(None),
+):
+    """Create a tracking session bound to an exact source video."""
+    if video is not None and video.filename:
+        suffix = Path(video.filename).suffix.lower()
+        if suffix not in VIDEO_EXTS:
+            raise HTTPException(400, "Поддерживаются только видеофайлы")
+        session_tmp = uuid.uuid4().hex[:12]
+        target = UPLOAD_DIR / f"ot_{session_tmp}{suffix}"
+        content = await video.read()
+        if len(content) > 500 * 1024 * 1024:
+            raise HTTPException(400, "Видео больше 500 МБ")
+        target.write_bytes(content)
+        source = target
+    else:
+        source = _ot_resolve_source(montage_job_id or None, project_id or None)
+    try:
+        fps = min(12.0, max(1.0, float(analysis_fps)))
+    except (TypeError, ValueError):
+        fps = 6.0
+    root = ot_service.sessions_root(MONTAGE_WORK)
+    created = ot_service.create_session(root, source, fps)
+    selection = ot_storage.read_selection(Path(created["session_dir"])) or {}
+    frame, meta = await asyncio.to_thread(_ot_read_upright_frame, source, 0)
+    import cv2 as _cv2
+    cap = _cv2.VideoCapture(str(source))
+    try:
+        src_fps = float(cap.get(_cv2.CAP_PROP_FPS) or 0) or 30.0
+        total_frames = int(cap.get(_cv2.CAP_PROP_FRAME_COUNT) or 0)
+    finally:
+        cap.release()
+    selection.update({
+        "video_meta": {"width": meta["width"], "height": meta["height"],
+                       "rotation": meta["rotation"], "fps": round(src_fps, 3),
+                       "frames": total_frames,
+                       "duration": round(total_frames / src_fps, 3) if src_fps else 0},
+        "status": "selecting",
+    })
+    ot_storage.write_selection(Path(created["session_dir"]), selection)
+    return {"session_id": created["session_id"], "video_meta": selection["video_meta"],
+            "status": ot_service.sam_status()}
+
+
+@app.get("/api/object-tracking/sessions/{session_id}/frame")
+async def object_tracking_frame(session_id: str, t: float = 0.0):
+    """Upright JPEG frame at *t* seconds for object selection."""
+    from fastapi.responses import Response
+    session_dir = _ot_session_or_404(session_id)
+    selection = ot_storage.read_selection(session_dir) or {}
+    source = Path(str(selection.get("source") or ""))
+    if not source.is_file():
+        raise HTTPException(410, "Исходное видео недоступно")
+    import cv2
+    cap = cv2.VideoCapture(str(source))
+    try:
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0) or 30.0
+    finally:
+        cap.release()
+    frame_idx = max(0, int(round(float(t or 0.0) * fps)))
+    files = ot_storage.ensure_session(session_dir)
+    cached = files["preview"] / f"frame_{frame_idx}.jpg"
+    if not cached.is_file():
+        frame, _ = await asyncio.to_thread(_ot_read_upright_frame, source, frame_idx)
+        cached.write_bytes(_ot_encode_jpeg(frame))
+    return Response(cached.read_bytes(), media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.post("/api/object-tracking/sessions/{session_id}/segment")
+async def object_tracking_segment(session_id: str, payload: dict):
+    """Preview segmentation for the current prompt set (no tracking yet)."""
+    session_dir = _ot_session_or_404(session_id)
+    selection = ot_storage.read_selection(session_dir) or {}
+    source = Path(str(selection.get("source") or ""))
+    if not source.is_file():
+        raise HTTPException(410, "Исходное видео недоступно")
+    prompts, error = ot_service.validate_prompts(payload.get("prompts"))
+    if error:
+        raise HTTPException(400, error)
+    frame_idx = int(payload.get("frame_idx", -1))
+    if frame_idx < 0:
+        video_meta = (selection.get("video_meta") or {})
+        src_fps = float(video_meta.get("fps") or 30.0)
+        frame_idx = max(0, int(round(float(payload.get("time", 0.0)) * src_fps)))
+    for prompt in prompts:
+        prompt["frame_idx"] = frame_idx
+    task = {"action": "segment", "video": str(source), "frame_idx": frame_idx,
+            "prompts": prompts, "checkpoint": str(ot_service.SAM_CHECKPOINT),
+            "model_cfg": ot_service.SAM_MODEL_CFG}
+    events: dict[str, Any] = {}
+
+    def on_line(event: dict[str, Any]) -> None:
+        if event.get("type") in {"mask", "mask_rle", "device", "error"}:
+            events[event["type"]] = event
+
+    summary = await _ot_run_worker_guarded(session_dir, task, on_line, 600)
+    if summary.get("type") == "error":
+        raise HTTPException(500, str(summary.get("message") or "Сегментация не удалась"))
+    mask_event = events.get("mask") or {}
+    if events.get("mask_rle", {}).get("rle"):
+        files = ot_storage.ensure_session(session_dir)
+        (files["preview"] / f"mask_{frame_idx}.json").write_text(
+            json.dumps(events["mask_rle"]["rle"], ensure_ascii=False), encoding="utf-8")
+    selection["prompts"] = prompts
+    selection["selection_frame"] = frame_idx
+    selection["mask_preview"] = {k: mask_event.get(k) for k in
+                                 ("x", "y", "bbox", "area", "score", "frame")}
+    selection["mask_rle"] = (events.get("mask_rle") or {}).get("rle")
+    if selection.get("status") not in {"tracked", "corrected", "confirmed"}:
+        selection["status"] = "segmented"
+    ot_storage.write_selection(session_dir, selection)
+    response = {"frame": frame_idx, "mask": selection["mask_preview"],
+                "device": events.get("device", {}).get("device")}
+    if selection.get("mask_rle"):
+        response["rle"] = selection["mask_rle"]
+    return response
+
+
+@app.post("/api/object-tracking/sessions/{session_id}/confirm-object")
+async def object_tracking_confirm_object(session_id: str):
+    session_dir = _ot_session_or_404(session_id)
+    selection = ot_storage.read_selection(session_dir) or {}
+    if not selection.get("prompts"):
+        raise HTTPException(400, "Сначала выберите объект и получите маску")
+    preview = selection.get("mask_preview") or {}
+    if not preview.get("area"):
+        raise HTTPException(400, "Маска пустая: кликните точнее или добавьте точки")
+    selection["status"] = "object_confirmed"
+    ot_storage.write_selection(session_dir, selection)
+    return {"status": "object_confirmed"}
+
+
+@app.get("/api/object-tracking/sessions/{session_id}/estimate")
+async def object_tracking_estimate(session_id: str, start_frame: int = 0,
+                                   end_frame: int = -1, analysis_fps: float = 6.0):
+    session_dir = _ot_session_or_404(session_id)
+    selection = ot_storage.read_selection(session_dir) or {}
+    source = Path(str(selection.get("source") or ""))
+    if not source.is_file():
+        raise HTTPException(410, "Исходное видео недоступно")
+    import cv2
+    cap = cv2.VideoCapture(str(source))
+    try:
+        src_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0) or 30.0
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    finally:
+        cap.release()
+    if end_frame < 0:
+        end_frame = max(0, total - 1)
+    span = {"start_frame": max(0, start_frame), "end_frame": max(0, end_frame)}
+    frames = ot_service.span_frame_count(span, src_fps, analysis_fps)
+    seconds = ot_service.estimate_seconds(
+        frames * 2, float(selection.get("sec_per_frame")
+                           or ot_service.DEFAULT_SEC_PER_FRAME))
+    return {"span": span, "analysis_frames": frames, "directions": 2,
+            "estimated_seconds": round(seconds),
+            "device": ot_service.sam_status().get("device")}
+
+
+@app.post("/api/object-tracking/sessions/{session_id}/track")
+async def object_tracking_track(session_id: str, payload: dict):
+    """Start tracking. Without ``confirmed_estimate`` returns the estimate only."""
+    session_dir = _ot_session_or_404(session_id)
+    selection = ot_storage.read_selection(session_dir) or {}
+    if selection.get("status") not in {"object_confirmed", "tracked", "corrected"}:
+        raise HTTPException(400, "Сначала подтвердите объект")
+    source = Path(str(selection.get("source") or ""))
+    if not source.is_file():
+        raise HTTPException(410, "Исходное видео недоступно")
+    prompts = selection.get("prompts") or []
+    if not prompts:
+        raise HTTPException(400, "Нет указаний объекта")
+    span = {"start_frame": max(0, int(payload.get("start_frame", 0))),
+            "end_frame": max(0, int(payload.get("end_frame", 0)))}
+    try:
+        analysis_fps = min(12.0, max(1.0, float(payload.get("analysis_fps", 6.0))))
+    except (TypeError, ValueError):
+        analysis_fps = 6.0
+    import cv2
+    cap = cv2.VideoCapture(str(source))
+    try:
+        src_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0) or 30.0
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    finally:
+        cap.release()
+    span["end_frame"] = min(max(0, total - 1), span["end_frame"] or max(0, total - 1))
+    frames = ot_service.span_frame_count(span, src_fps, analysis_fps)
+    seconds = ot_service.estimate_seconds(
+        frames * 2, float(selection.get("sec_per_frame")
+                           or ot_service.DEFAULT_SEC_PER_FRAME))
+    if not payload.get("confirmed_estimate"):
+        return {"estimate_only": True, "span": span,
+                "analysis_frames": frames, "estimated_seconds": round(seconds)}
+    selection["status"] = "tracking"
+    selection["span"] = span
+    selection["analysis_fps"] = analysis_fps
+    ot_storage.write_selection(session_dir, selection)
+
+    async def _run() -> None:
+        task = {"action": "track", "video": str(source), "prompts": prompts,
+                "span": span,
+                "selection_frame": int(selection.get("selection_frame", span["start_frame"])),
+                "analysis_fps": analysis_fps,
+                "checkpoint": str(ot_service.SAM_CHECKPOINT),
+                "model_cfg": ot_service.SAM_MODEL_CFG,
+                "sec_per_frame_guess": True}
+        summary = await _ot_run_worker_guarded(session_dir, task, None, 86400)
+        current = ot_storage.read_selection(session_dir) or {}
+        cancelled_here = (session_dir / "cancel.flag").is_file()
+        try:
+            (session_dir / "cancel.flag").unlink()
+        except OSError:
+            pass
+        if summary.get("type") == "done":
+            flagged = ot_service.mark_samples_suspicious(session_dir)
+            current["status"] = "tracked"
+            current["suspicious"] = flagged
+        elif summary.get("type") == "cancelled" or cancelled_here:
+            current["status"] = "cancelled"
+        else:
+            current["status"] = "failed"
+            current["error"] = str(summary.get("message") or "Анализ не удался")
+        ot_storage.write_selection(session_dir, current)
+
+    _track_ot_task(session_id, _run())
+    return {"started": True, "span": span, "analysis_frames": frames,
+            "estimated_seconds": round(seconds)}
+
+
+@app.get("/api/object-tracking/sessions/{session_id}/progress")
+async def object_tracking_progress(session_id: str):
+    session_dir = _ot_session_or_404(session_id)
+    summary = ot_service.session_summary(session_dir)
+    running = any(not t.done() for t in OT_TASKS.get(session_id, set()))
+    summary["running"] = running
+    try:
+        loss_idx = [i for i, s in enumerate(ot_storage.iter_samples(session_dir))
+                    if s.get("suspicious") or not s.get("visible")][:500]
+    except Exception:
+        loss_idx = []
+    summary["loss_idx"] = loss_idx
+    return summary
+
+
+@app.post("/api/object-tracking/sessions/{session_id}/correct")
+async def object_tracking_correct(session_id: str, payload: dict):
+    """Add a correction prompt on a problem frame and recompute its span."""
+    session_dir = _ot_session_or_404(session_id)
+    selection = ot_storage.read_selection(session_dir) or {}
+    if selection.get("status") not in {"tracked", "corrected", "confirmed"}:
+        raise HTTPException(400, "Сначала завершите первичный анализ")
+    prompts, error = ot_service.validate_prompts(payload.get("prompts"))
+    if error:
+        raise HTTPException(400, error)
+    samples = list(ot_storage.iter_samples(session_dir))
+    try:
+        sample_idx = max(0, int(payload.get("sample_idx", -1)))
+        correction_frame = int(samples[sample_idx].get("frame", 0))
+    except (IndexError, TypeError, ValueError):
+        correction_frame = int(prompts[0].get("frame_idx", 0))
+    for prompt in prompts:
+        prompt["frame_idx"] = correction_frame
+    merged = list(selection.get("prompts") or []) + prompts
+    selection["prompts"] = merged
+    selection["corrections"] = list(selection.get("corrections") or []) + prompts
+    import cv2
+    cap = cv2.VideoCapture(str(selection.get("source") or ""))
+    try:
+        src_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0) or 30.0
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    finally:
+        cap.release()
+    radius = int(payload.get("radius_seconds", 15) * src_fps)
+    span = {"start_frame": max(0, correction_frame - radius),
+            "end_frame": min(max(0, total - 1), correction_frame + radius)}
+    analysis_fps = float(selection.get("analysis_fps") or 6.0)
+    # Drop old samples inside the recomputed span; keep everything outside.
+    kept = [s for s in ot_storage.iter_samples(session_dir)
+            if not (span["start_frame"] <= int(s.get("frame", -1)) <= span["end_frame"])]
+    ot_storage.clear_tracking(session_dir)
+    for sample in kept:
+        ot_storage.append_sample(session_dir, sample)
+    selection["status"] = "tracking"
+    ot_storage.write_selection(session_dir, selection)
+
+    async def _run() -> None:
+        task = {"action": "track", "video": str(selection.get("source")),
+                "prompts": merged, "span": span,
+                "selection_frame": correction_frame,
+                "analysis_fps": analysis_fps,
+                "checkpoint": str(ot_service.SAM_CHECKPOINT),
+                "model_cfg": ot_service.SAM_MODEL_CFG}
+        summary = await _ot_run_worker_guarded(session_dir, task, None, 86400)
+        current = ot_storage.read_selection(session_dir) or {}
+        cancelled_here = (session_dir / "cancel.flag").is_file()
+        try:
+            (session_dir / "cancel.flag").unlink()
+        except OSError:
+            pass
+        if summary.get("type") == "done":
+            current["suspicious"] = ot_service.mark_samples_suspicious(session_dir)
+            current["status"] = "corrected"
+        elif summary.get("type") == "cancelled" or cancelled_here:
+            current["status"] = "cancelled"
+        else:
+            current["status"] = "failed"
+            current["error"] = str(summary.get("message") or "Анализ не удался")
+        ot_storage.write_selection(session_dir, current)
+
+    _track_ot_task(session_id, _run())
+    return {"started": True, "span": span}
+
+
+@app.post("/api/object-tracking/sessions/{session_id}/confirm-trajectory")
+async def object_tracking_confirm_trajectory(session_id: str):
+    session_dir = _ot_session_or_404(session_id)
+    ok, error = ot_service.confirm_session(session_dir)
+    if not ok:
+        raise HTTPException(400, error)
+    return {"status": "confirmed"}
+
+
+@app.post("/api/object-tracking/sessions/{session_id}/cancel")
+async def object_tracking_cancel(session_id: str):
+    session_dir = _ot_session_or_404(session_id)
+    tasks = [t for t in OT_TASKS.get(session_id, set()) if not t.done()]
+    ot_service.cancel_worker(session_dir)
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    selection = ot_storage.read_selection(session_dir) or {}
+    if selection.get("status") == "tracking":
+        selection["status"] = "cancelled"
+        ot_storage.write_selection(session_dir, selection)
+    return {"cancelled": True}
+
+
+@app.delete("/api/object-tracking/sessions/{session_id}")
+async def object_tracking_delete_session(session_id: str):
+    session_dir = _ot_session_or_404(session_id)
+    tasks = [t for t in OT_TASKS.get(session_id, set()) if not t.done()]
+    ot_service.cancel_worker(session_dir)
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    shutil.rmtree(session_dir, ignore_errors=True)
+    OT_TASKS.pop(session_id, None)
+    return {"deleted": True}
+
+
+@app.get("/api/object-tracking/sessions/{session_id}/preview-frame")
+async def object_tracking_preview_frame(session_id: str, n: int = 0):
+    """Overlay JPEG for scrubbing: mask contour + tracking point + loss flag."""
+    from fastapi.responses import Response
+    session_dir = _ot_session_or_404(session_id)
+    samples = [s for s in ot_storage.iter_samples(session_dir)]
+    if not samples:
+        raise HTTPException(404, "Нет результатов анализа")
+    n = max(0, min(n, len(samples) - 1))
+    sample = samples[n]
+    selection = ot_storage.read_selection(session_dir) or {}
+    source = Path(str(selection.get("source") or ""))
+    frame, meta = await asyncio.to_thread(
+        _ot_read_upright_frame, source, int(sample.get("frame", 0)))
+    import cv2
+    import numpy as np
+    height, width = frame.shape[:2]
+    rle = (sample.get("mask") or {})
+    if rle.get("counts"):
+        decoded = ot_storage.decode_rle(rle)
+        try:
+            mask_arr = (np.asarray(decoded) > 0).astype(np.uint8)
+            if mask_arr.shape[:2] != (height, width):
+                mask_arr = cv2.resize(mask_arr, (width, height),
+                                      interpolation=cv2.INTER_NEAREST)
+        except Exception:
+            mask_arr = None
+        if mask_arr is not None and mask_arr.any():
+            contours, _ = cv2.findContours(
+                mask_arr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            color = (0, 0, 255) if sample.get("suspicious") else (0, 255, 0)
+            cv2.drawContours(frame, contours, -1, color, 2)
+            overlay = frame.copy()
+            overlay[mask_arr > 0] = (0, 255, 0)
+            cv2.addWeighted(overlay, 0.3, frame, 0.7, 0, frame)
+    cx = int(float(sample.get("x", 0.5)) * width)
+    cy = int(float(sample.get("y", 0.5)) * height)
+    cv2.circle(frame, (cx, cy), 6, (255, 0, 0), -1)
+    label = f"f={sample.get('frame')} {'LOSS' if sample.get('suspicious') or not sample.get('visible') else 'ok'}"
+    cv2.putText(frame, label, (12, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                (255, 255, 255), 2, cv2.LINE_AA)
+    return Response(_ot_encode_jpeg(frame), media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=3600"})
 
 
 _youtube_reauth_state: dict[str, str] = {"status": "idle", "detail": ""}
