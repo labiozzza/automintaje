@@ -1328,7 +1328,7 @@ _MONTAGE_SIGNATURE_KEYS = (
     "mirror_horizontal", "face_tracking", "autozoom", "subtitles",
     "subtitle_mode", "subtitle_position", "subtitle_x", "subtitle_y",
     "subtitle_scale", "subtitle_box", "subtitle_font",
-    "blur_banned_words", "edge_mode", "overlays", "animation",
+    "blur_banned_words", "edge_mode", "overlays", "animation", "animations",
     "zoom_timeline_override",
     "camera_mode", "follow_strength", "lag_seconds", "min_zoom",
     "camera_wobble",
@@ -1356,6 +1356,63 @@ def _validate_float_range(raw: Any, low: float, high: float,
     if not (low <= value <= high):
         raise HTTPException(400, f"{name} должен быть от {low} до {high}")
     return value
+
+
+def _validate_timeline_animations(raw: Any, legacy_id: str = "",
+                                  legacy_start: float = 0.0,
+                                  legacy_offset_x: int = 0,
+                                  legacy_item_size: int = 72) -> list:
+    """Validate the timeline animation list [{id, start, offset_x, item_size}].
+
+    Falls back to the legacy single-animation fields when no list is given,
+    so old clients keep working.
+    """
+    items = []
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "animations должен быть JSON-списком")
+        if not isinstance(parsed, list):
+            raise HTTPException(400, "animations должен быть JSON-списком")
+        items = parsed
+    if not items and legacy_id:
+        items = [{"id": legacy_id, "start": legacy_start,
+                  "offset_x": legacy_offset_x, "item_size": legacy_item_size}]
+    validated = []
+    for entry in items[:20]:
+        if not isinstance(entry, dict):
+            continue
+        animation_id = str(entry.get("id") or "")
+        if not animation_id or Path(animation_id).name != animation_id:
+            raise HTTPException(400, f"Некорректный id анимации: {animation_id!r}")
+        if not (montage_engine.ANIMATIONS_DIR / animation_id / "manifest.json").is_file():
+            raise HTTPException(400, f"Анимация не найдена: {animation_id}")
+        try:
+            start = max(0.0, float(entry.get("start") or 0.0))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "start должен быть числом")
+        try:
+            offset_x = int(entry.get("offset_x") or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "offset_x должен быть целым")
+        if not -1000 <= offset_x <= 1000:
+            raise HTTPException(400, "offset_x должен быть от -1000 до 1000")
+        try:
+            item_size = int(entry.get("item_size") or 72)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "item_size должен быть целым")
+        try:
+            speed = float(entry.get("speed", 100.0))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "speed должен быть числом")
+        if not 10.0 <= speed <= 400.0:
+            raise HTTPException(400, "speed должен быть от 10 до 400")
+        validated.append({"id": animation_id, "start": start,
+                          "offset_x": offset_x,
+                          "item_size": max(20, min(1200, item_size)),
+                          "speed": speed})
+    return validated
 
 
 def _montage_signature(params: dict) -> str:
@@ -1477,11 +1534,11 @@ async def process_mirror_variant(job_id: str) -> None:
 
     job["mirror_variant"] = {
         "status": "generating", "progress": 0,
-        "detail": "Подготовка отражённой версии", "error": "",
+        "detail": "Отражённая версия (мастер): рендер", "error": "",
         "path": None, "signature": signature, "operation": None,
     }
     _save_montage_job(job_id)
-    await _montage_announce(job_id, "Подготовка отражённой версии...")
+    await _montage_announce(job_id, "Отражённая версия (мастер): рендер...")
 
     def report(snapshot: dict) -> None:
         def store() -> None:
@@ -2482,6 +2539,7 @@ async def process_cover_suggestions(job_id: str) -> None:
             MONTAGE_WORK / job_id / "covers",
             progress,
             str(job.get("cover_title") or ""),
+            str(((job.get("params") or {}).get("ai_model")) or ""),
         )
         job["covers"] = items
         job["cover_status"] = "done"
@@ -2853,6 +2911,57 @@ def download_face_model(job_id: str, progress):
     os.replace(part, str(model))
 
 
+_AI_MODELS_CACHE = {"models": [], "ts": 0.0, "lock": threading.Lock()}
+
+
+def _parse_opencode_models(text: str) -> list:
+    models = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line.count("/") == 1 and not any(ch.isspace() for ch in line) and len(line) <= 100:
+            models.append(line)
+    return models
+
+
+def montage_ai_models() -> list:
+    """List models currently offered by the opencode CLI (cached 60 s)."""
+    now = time.time()
+    with _AI_MODELS_CACHE["lock"]:
+        if _AI_MODELS_CACHE["models"] and now - _AI_MODELS_CACHE["ts"] < 60:
+            return list(_AI_MODELS_CACHE["models"])
+        models = []
+        try:
+            out = subprocess.run(
+                [montage_engine.opencode_bin(), "models"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=15,
+            )
+            if out.returncode == 0:
+                models = _parse_opencode_models(out.stdout)
+        except Exception:
+            models = []
+        _AI_MODELS_CACHE["models"] = models
+        _AI_MODELS_CACHE["ts"] = now
+        return list(models)
+
+
+def _normalize_ai_model(raw: Any) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    if len(value) > 100 or value.count("/") != 1 or any(ch.isspace() for ch in value):
+        raise HTTPException(400, "Некорректное имя модели ИИ")
+    return value
+
+
+@app.get("/api/ai/models")
+async def ai_models_list():
+    load_secrets_env()
+    models = montage_ai_models()
+    default_model = os.getenv("BIGPICKLE_MODEL", "opencode/big-pickle").strip()
+    return {"available": bool(models), "models": models, "default": default_model}
+
+
 @app.get("/api/montage/status")
 async def montage_status():
     load_secrets_env()
@@ -2860,7 +2969,8 @@ async def montage_status():
     entries = [
         {"id": j["id"], "name": j["original_name"], "status": j["status"],
          "phase": j.get("phase"), "warnings": list(j.get("warnings") or []),
-         "created_at": j.get("created_at", "")}
+         "created_at": j.get("created_at", ""),
+         "project_id": j.get("project_id"), "has_result": bool(j.get("result"))}
         for j in jobs.values() if j.get("kind") == "montage"
     ]
     entries.sort(key=lambda item: item["created_at"])
@@ -2909,12 +3019,14 @@ async def start_montage(
     blur_banned_words: bool = Form(False),
     subtitles: bool = Form(True),
     bigpickle: bool = Form(True),
+    ai_model: str = Form(""),
     edge_mode: str = Form("scale"),
     animation_id: str = Form(""),
     animation_start: float = Form(0.0),
     animation_offset_x: int = Form(0),
     animation_item_size: int = Form(72),
     animation_bar: bool = Form(False),
+    animations: str = Form("[]"),
     overlays_json: Optional[str] = Form(None),
     propose_cover: bool = Form(False),
     cover_title: str = Form(""),
@@ -2922,6 +3034,7 @@ async def start_montage(
     prepare_mirrored: bool = Form(False),
 ):
     job_id = str(uuid.uuid4())[:8]
+    ai_model = _normalize_ai_model(ai_model)
     work_dir = MONTAGE_WORK / job_id
     work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -3129,6 +3242,7 @@ async def start_montage(
         "blur_banned_words": blur_banned_words,
         "subtitles": subtitles,
         "bigpickle": bigpickle,
+        "ai_model": ai_model,
         "edge_mode": edge_mode,
         "overlays": overlays,
         "animation": {
@@ -3139,6 +3253,9 @@ async def start_montage(
             "item_size": max(20, animation_item_size),
             "bar": animation_bar,
         },
+        "animations": _validate_timeline_animations(
+            animations, animation_id, animation_start,
+            animation_offset_x, animation_item_size),
         "zoom_timeline_override": zoom_override,
         "prepare_mirrored": bool(prepare_mirrored),
     }
@@ -3170,7 +3287,7 @@ async def start_montage(
             job["phase"] = "rendering_mirror"
             _save_montage_job(job_id)
             if not mirror_variant_ready(job):
-                await broadcast_progress(job_id, 93, "rendering_mirror", "Подготовка отражённой версии")
+                await broadcast_progress(job_id, 93, "rendering_mirror", "Отражённая версия (мастер): рендер")
                 await process_mirror_variant(job_id)
         # ---- Phase C: verify and finalize (no premature done) ----
         # Platform artefacts are prepared lazily at publish time
@@ -3580,6 +3697,32 @@ async def montage_animations():
     return {"animations": montage_engine.animation_ids()}
 
 
+def _animation_dir_or_404(animation_id: str) -> Path:
+    clean = Path(animation_id).name
+    if not clean or clean != animation_id:
+        raise HTTPException(400, "Некорректный id анимации")
+    target = montage_engine.ANIMATIONS_DIR / clean
+    manifest = target / "manifest.json"
+    if not target.is_dir() or not manifest.is_file():
+        raise HTTPException(404, "Анимация не найдена")
+    return target
+
+
+@app.get("/api/montage/animations/{animation_id}")
+async def montage_animation_detail(animation_id: str):
+    target = _animation_dir_or_404(animation_id)
+    manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+    frames = manifest.get("frames") or []
+    urls = []
+    for entry in frames:
+        name = entry.get("file") if isinstance(entry, dict) else entry
+        if name and (target / Path(name).name).is_file():
+            urls.append(f"/animation-assets/{animation_id}/{Path(name).name}")
+    return {"id": animation_id, "name": manifest.get("name", animation_id),
+            "fps": manifest.get("fps", 10), "frames": urls,
+            "names": [url.rsplit("/", 1)[1] for url in urls]}
+
+
 @app.post("/api/montage/animations")
 async def upload_animation(zipfile: UploadFile = File(...)):
     import zipfile as _zipfile
@@ -3641,6 +3784,95 @@ async def create_animation(
         shutil.rmtree(target, ignore_errors=True)
         raise
     return {"animation": {"id": animation_id, "name": clean_name}}
+
+
+@app.post("/api/montage/animations/{animation_id}/update")
+async def update_animation(
+    animation_id: str,
+    name: str = Form(""),
+    fps: float = Form(10.0),
+    keep: str = Form("[]"),
+    frames: list[UploadFile] = File([]),
+):
+    """Update name/fps/order/frames. ``keep`` = JSON list of existing
+    filenames in the desired order (deleted files are dropped)."""
+    from PIL import Image
+
+    target = _animation_dir_or_404(animation_id)
+    manifest_path = target / "manifest.json"
+    try:
+        keep_names = json.loads(keep or "[]")
+    except (TypeError, ValueError):
+        raise HTTPException(400, "keep должен быть JSON-списком")
+    if not isinstance(keep_names, list):
+        raise HTTPException(400, "keep должен быть JSON-списком")
+    existing = {}
+    try:
+        old_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for entry in old_manifest.get("frames") or []:
+            filename = entry.get("file") if isinstance(entry, dict) else entry
+            if filename and (target / Path(filename).name).is_file():
+                existing[Path(filename).name] = True
+    except (OSError, ValueError):
+        pass
+    ordered_kept = []
+    for filename in keep_names:
+        safe = Path(str(filename)).name
+        if safe in existing and safe not in ordered_kept:
+            ordered_kept.append(safe)
+    manifest_frames = []
+    try:
+        # Two passes: kept files first move to temp names, otherwise a
+        # reorder like [b, a] would overwrite a before it is moved.
+        staged = []
+        for filename in ordered_kept:
+            current = target / filename
+            temp = target / f"kept_{uuid.uuid4().hex[:8]}.png"
+            current.rename(temp)
+            staged.append(temp)
+        for temp in staged:
+            output = target / f"frame_{len(manifest_frames):04d}.png"
+            if output.is_file():
+                output.unlink()
+            temp.rename(output)
+            manifest_frames.append({"file": output.name})
+        for upload in frames or []:
+            raw = await upload.read()
+            if not raw:
+                continue
+            source = target / f"upload_{uuid.uuid4().hex[:8]}"
+            source.write_bytes(raw)
+            output = target / f"frame_{len(manifest_frames):04d}.png"
+            try:
+                with Image.open(source) as image:
+                    image.convert("RGBA").save(output, "PNG")
+            finally:
+                source.unlink(missing_ok=True)
+            manifest_frames.append({"file": output.name})
+        if not manifest_frames:
+            raise HTTPException(400, "Анимация не может остаться без кадров")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["name"] = (name or "").strip() or manifest.get("name", animation_id)
+        manifest["fps"] = max(1.0, min(60.0, float(fps)))
+        manifest["frames"] = manifest_frames
+        manifest["updated_at"] = time.time()
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        for leftover in target.iterdir():
+            if leftover.is_file() and leftover.name.startswith(("frame_", "upload_")) \
+                    and leftover.name not in {entry["file"] for entry in manifest_frames}:
+                leftover.unlink(missing_ok=True)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, f"Не удалось обновить анимацию: {exc}")
+    return {"animation": {"id": animation_id, "name": manifest["name"]}}
+
+
+@app.delete("/api/montage/animations/{animation_id}")
+async def delete_animation(animation_id: str):
+    target = _animation_dir_or_404(animation_id)
+    shutil.rmtree(target, ignore_errors=True)
+    return {"deleted": animation_id}
 
 
 @app.get("/api/jobs")

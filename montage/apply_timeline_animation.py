@@ -160,7 +160,7 @@ def main() -> None:
             "uid": str(raw.get("uid") or f"overlay-{index + 1}"),
             "kind": kind,
             "frames": resized_cache[resized_key],
-            "fps": max(0.1, float(overlay_fps)),
+            "fps": max(0.1, float(raw.get("fps") or overlay_fps)),
             "start": start,
             "end": end,
             "x": min(1.0, max(0.0, float(raw.get("x") if raw.get("x") is not None else 0.5))),

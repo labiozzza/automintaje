@@ -150,7 +150,7 @@ def _auto_titles(transcript: str, count: int) -> list[str]:
     return titles
 
 
-def _bigpickle_titles(transcript: str, count: int) -> list[str]:
+def _bigpickle_titles(transcript: str, count: int, model: str = "") -> list[str]:
     from .generate_configs_from_transcript_srt import _extract_text_from_ndjson, _run_opencode, extract_json_object
 
     prompt = f"""Придумай ровно {count} разных кликбейтных заголовка для обложек короткого вертикального видео по транскрипции ниже.
@@ -168,7 +168,7 @@ def _bigpickle_titles(transcript: str, count: int) -> list[str]:
 ---
 {transcript}
 ---"""
-    raw = _run_opencode(prompt)
+    raw = _run_opencode(prompt, model=model)
     payload = extract_json_object(_extract_text_from_ndjson(raw)) or extract_json_object(raw)
     candidates = payload.get("titles") if isinstance(payload, dict) else None
     if not isinstance(candidates, list):
@@ -205,6 +205,7 @@ def generate_suggested_covers(
     covers_dir: Path,
     progress: Callable[[float, str], None],
     manual_title: str = "",
+    ai_model: str = "",
 ) -> list[dict[str, str]]:
     covers_dir.mkdir(parents=True, exist_ok=True)
     frames_dir = covers_dir / "frames"
@@ -215,7 +216,7 @@ def generate_suggested_covers(
     count = 5 if manual_title.strip() else 4
     progress(3, "BigPickle придумывает заголовки")
     try:
-        titles = _bigpickle_titles(transcript, 4)
+        titles = _bigpickle_titles(transcript, 4, model=ai_model)
     except Exception as exc:
         (covers_dir / "title_generation_error.log").write_text(str(exc), encoding="utf-8")
         titles = _auto_titles(transcript, 4)

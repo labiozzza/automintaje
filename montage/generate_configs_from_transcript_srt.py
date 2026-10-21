@@ -206,9 +206,9 @@ def group_phrases(words: list[Cue]) -> list[list[Cue]]:
     return groups
 
 
-def _run_opencode(prompt: str, timeout: float = BIGPICKLE_TIMEOUT_SECONDS) -> str:
+def _run_opencode(prompt: str, timeout: float = BIGPICKLE_TIMEOUT_SECONDS, model: str = "") -> str:
     cmd = [
-        OPENCODE_BIN, "run", "-m", BIGPICKLE_MODEL, "--format", "json", prompt,
+        OPENCODE_BIN, "run", "-m", (model or BIGPICKLE_MODEL).strip() or BIGPICKLE_MODEL, "--format", "json", prompt,
     ]
     result = subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",

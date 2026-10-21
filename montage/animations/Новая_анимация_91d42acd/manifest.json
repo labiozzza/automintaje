@@ -1,0 +1,21 @@
+{
+  "id": "Новая_анимация_91d42acd",
+  "name": "Злая собака",
+  "fps": 7.0,
+  "frames": [
+    {
+      "file": "frame_0000.png"
+    },
+    {
+      "file": "frame_0001.png"
+    },
+    {
+      "file": "frame_0002.png"
+    },
+    {
+      "file": "frame_0003.png"
+    }
+  ],
+  "created_at": 1791963284.980204,
+  "updated_at": 1791963611.716911
+}

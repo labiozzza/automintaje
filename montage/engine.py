@@ -589,6 +589,67 @@ def ensure_tracking_has_anchors(tracking_path: Path) -> bool:
     return True
 
 
+def _manifest_fps(animation_id: str) -> float:
+    try:
+        manifest = json.loads(
+            (ANIMATIONS_DIR / animation_id / "manifest.json").read_text(encoding="utf-8"))
+        return max(0.1, float(manifest.get("fps") or 10.0))
+    except (OSError, ValueError):
+        return 10.0
+
+
+def timeline_animation_layers(entries: list) -> tuple[list, list]:
+    """Build render layers for timeline animations.
+
+    Base playback rate = fps of the first animation, so all of them run at
+    the same speed by default; per-item ``speed`` (%) scales from it.  A
+    single animation keeps its own fps at 100% (backward compatible).
+    Returns (layers, used_for_meta).
+    """
+    def _layer(entry: dict[str, Any], index: int, base_fps: float) -> dict[str, Any] | None:
+        animation_id = str(entry.get("id") or "")
+        if not animation_id or Path(animation_id).name != animation_id:
+            return None
+        if not (ANIMATIONS_DIR / animation_id / "manifest.json").exists():
+            raise RuntimeError(f"Анимация {animation_id} не найдена в {ANIMATIONS_DIR}")
+        try:
+            speed = float(entry.get("speed", 100.0))
+        except (TypeError, ValueError):
+            speed = 100.0
+        speed = min(400.0, max(10.0, speed))
+        return {
+            "uid": f"timeline-animation-{index}",
+            "animation_id": animation_id,
+            "start": max(0.0, float(entry.get("start") or 0.0)),
+            "end": 86400.0,
+            "size": max(20, min(1200, int(entry.get("item_size") or 72))),
+            "z_index": -1 - index,
+            "motion": "progress",
+            "offset_x": int(entry.get("offset_x") or 0),
+            "fps": round(max(0.1, base_fps * speed / 100.0), 3),
+            "speed": speed,
+        }
+
+    valid = [entry for entry in (entries or [])
+             if isinstance(entry, dict) and str(entry.get("id") or "")]
+    base_fps = 10.0
+    if valid:
+        base_fps = _manifest_fps(str(valid[0]["id"]))
+    layers, used, seen = [], [], set()
+    for index, entry in enumerate(valid[:20]):
+        layer = _layer(entry, index, base_fps)
+        if layer is None or layer["animation_id"] in seen:
+            continue
+        seen.add(layer["animation_id"])
+        layers.append(layer)
+        used.append({
+            "id": layer["animation_id"], "start": layer["start"],
+            "offset_x": layer["offset_x"], "item_size": layer["size"],
+            "speed": layer["speed"], "fps": layer["fps"],
+        })
+    return layers, used
+
+
 def render_montage(
     *,
     job_id: str,
@@ -772,6 +833,8 @@ def render_montage(
     use_bigpickle = bool(options.get("bigpickle", True)) and internet_available()
 
     log_cb(f"BigPickle: {use_bigpickle} (интернет {'есть' if internet_available() else 'нет'})")
+    ai_model = str(options.get("ai_model") or "").strip() or os.getenv("BIGPICKLE_MODEL", "opencode/big-pickle").strip()
+    log_cb(f"Модель ИИ: {ai_model}")
 
     tracking_path = workdir / "face_tracking.json"
     zoom_out = workdir / "zoom.mp4"
@@ -780,6 +843,8 @@ def render_montage(
     _start("configs", "Генерация конфигов зума и подсветки (BigPickle)...")
     env = dict(os.environ)
     env["USE_BIGPICKLE"] = "1" if use_bigpickle else "0"
+    if ai_model and ai_model != env.get("BIGPICKLE_MODEL"):
+        env["BIGPICKLE_MODEL"] = ai_model
     code = run_cmd(
         [PYTHON, "-u", str(MONAGE_DIR / "generate_configs_from_transcript_srt.py"), str(transcript)],
         cwd=workdir, log_path=workdir / "configs.log", timeout=900,
@@ -1016,28 +1081,19 @@ def render_montage(
         used_overlays.append(overlay)
 
     used_animation: dict[str, Any] | None = None
+    used_animations: list[dict[str, Any]] = []
     render_layers = list(used_overlays)
-    if bool(animation_cfg.get("enabled")) and str(animation_cfg.get("id") or ""):
-        animation_id = str(animation_cfg.get("id"))
-        if Path(animation_id).name != animation_id or not (ANIMATIONS_DIR / animation_id / "manifest.json").exists():
-            raise RuntimeError(f"Анимация {animation_id} не найдена в {ANIMATIONS_DIR}")
-        animation_start = max(0.0, float(animation_cfg.get("start") or 0.0))
-        used_animation = {
-            "id": animation_id,
-            "start": animation_start,
-            "offset_x": int(animation_cfg.get("offset_x") or 0),
-            "item_size": max(20, min(1200, int(animation_cfg.get("item_size") or 72))),
-        }
-        render_layers.append({
-            "uid": "timeline-animation",
-            "animation_id": animation_id,
-            "start": animation_start,
-            "end": 86400.0,
-            "size": used_animation["item_size"],
-            "z_index": -1,
-            "motion": "progress",
-            "offset_x": used_animation["offset_x"],
-        })
+
+    timeline_entries = [entry for entry in
+                        (options.get("animations") if isinstance(options.get("animations"), list) else [])
+                        if isinstance(entry, dict)]
+    if not timeline_entries and bool(animation_cfg.get("enabled")) and str(animation_cfg.get("id") or ""):
+        # Legacy single-animation jobs predate the list.
+        timeline_entries = [animation_cfg]
+    animation_layers, used_animations = timeline_animation_layers(timeline_entries)
+    render_layers.extend(animation_layers)
+    if used_animations:
+        used_animation = dict(used_animations[0])
 
     if render_layers:
         _start("animation", f"Рендер визуальных слоёв: {len(render_layers)}...")
