@@ -23,6 +23,7 @@ import random
 import shutil
 import subprocess
 import sys
+import os
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,50 @@ ZOOM_STEP_VALUES_DEFAULT = "0,20,40,60,80"
 
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+
+
+def sdr_color_args(video_path: Path) -> list[str]:
+    """Return color metadata args only for SDR (bt709) sources.
+
+    HDR/BT.2020/PQ/HLG metadata is NOT copied onto an 8-bit SDR output
+    without a proper tone mapping (Stage C).  For non-SDR sources we return
+    an empty list so ffmpeg keeps its default (no misleading HDR tags).
+    """
+    try:
+        import subprocess as _sp, json as _json, shutil as _sh
+        out = _sp.check_output(
+            [_sh.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=color_primaries,color_transfer,color_space,color_range",
+             "-of", "json", str(video_path)],
+            text=True, encoding="utf-8", errors="replace", timeout=30,
+        )
+        data = _json.loads(out or "{}")
+        streams = data.get("streams") or []
+        if not streams:
+            return []
+        st = streams[0]
+        cp = (st.get("color_primaries") or "").lower()
+        ct = (st.get("color_transfer") or "").lower()
+        cs = (st.get("color_space") or "").lower()
+        cr = (st.get("color_range") or "").lower()
+        sdr = (cp in ("", "bt709") and ct in ("", "bt709") and cs in ("", "bt709")
+               and cr in ("", "tv", "mpeg"))
+        if not sdr:
+            return []
+        args = []
+        if cp:
+            args += ["-color_primaries", cp]
+        if ct:
+            args += ["-color_trc", ct]
+        if cs:
+            args += ["-colorspace", cs]
+        if cr:
+            args += ["-color_range", cr]
+        return args
+    except Exception:
+        return []
 
 
 def fail(message: str, code: int = 1) -> None:
@@ -627,7 +672,8 @@ def transform_frame(
     )
 
 
-def start_ffmpeg(output: Path, video_path: Path, width: int, height: int, fps: float, crf: int, preset: str) -> subprocess.Popen:
+def start_ffmpeg(output: Path, video_path: Path, width: int, height: int, fps: float, crf: int, preset: str,
+                pix_fmt: str = "yuv420p", color_args: list[str] | None = None) -> subprocess.Popen:
     if shutil.which("ffmpeg") is None:
         fail("ffmpeg not found in PATH")
 
@@ -659,7 +705,8 @@ def start_ffmpeg(output: Path, video_path: Path, width: int, height: int, fps: f
         "-crf",
         str(crf),
         "-pix_fmt",
-        "yuv420p",
+        pix_fmt,
+    ] + (color_args or []) + [
         "-c:a",
         "copy",
         "-movflags",
@@ -911,6 +958,8 @@ def main() -> None:
 
     crf = cfg_int(render_cfg, "encoding.crf", args.crf)
     preset = cfg_str(render_cfg, "encoding.preset", args.preset) or args.preset
+    pix_fmt = str(os.environ.get("AUTOMONTAGE_INTERMEDIATE_PIX_FMT") or "" and os.environ["AUTOMONTAGE_INTERMEDIATE_PIX_FMT"] or cfg_str(render_cfg, "encoding.pix_fmt", None) or "yuv420p")
+    color_args = sdr_color_args(video_path)
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -969,7 +1018,7 @@ def main() -> None:
         f"frame_3s={float(zs[int(min(len(zs) - 1, fps * 3))]):.3f}"
     )
 
-    ffmpeg = start_ffmpeg(output_path, video_path, width, height, fps, crf, preset)
+    ffmpeg = start_ffmpeg(output_path, video_path, width, height, fps, crf, preset, pix_fmt, color_args)
     assert ffmpeg.stdin is not None
 
     frame_index = 0

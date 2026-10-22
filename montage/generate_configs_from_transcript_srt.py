@@ -534,7 +534,7 @@ def base_subtitle_render(output: str) -> dict[str, Any]:
             },
         },
         "layout": {"max_lines": 2, "uppercase": False},
-        "encoding": {"crf": 0, "preset": "medium"},
+        "encoding": {"crf": 0, "preset": "medium", "pix_fmt": "yuv420p"},
     }
 
 
@@ -574,7 +574,7 @@ def main() -> None:
             # and only describes the semantic zoom timeline.
             "anchor_mode": "eye_center",
             "eye_screen": {"x": 0.5, "y": 0.42},
-            "encoding": {"crf": 0, "preset": "medium"},
+            "encoding": {"crf": 0, "preset": "medium", "pix_fmt": "yuv420p"},
             "zoom": {
                 "source": "timeline",
                 "percent_mode": "direct",

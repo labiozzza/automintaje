@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import os
 from pathlib import Path
 from typing import Any
 
@@ -176,6 +177,42 @@ def wrap_tokens(
     return lines
 
 
+
+
+def sdr_color_args(video_path: Path) -> list[str]:
+    """Color metadata args only for SDR (bt709) sources; HDR tags are not copied."""
+    try:
+        out = subprocess.check_output(
+            [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=color_primaries,color_transfer,color_space,color_range",
+             "-of", "json", str(video_path)],
+            text=True, encoding="utf-8", errors="replace", timeout=30,
+        )
+        streams = (json.loads(out or "{}").get("streams") or [])
+        if not streams:
+            return []
+        st = streams[0]
+        cp = (st.get("color_primaries") or "").lower()
+        ct = (st.get("color_transfer") or "").lower()
+        cs = (st.get("color_space") or "").lower()
+        cr = (st.get("color_range") or "").lower()
+        if not (cp in ("", "bt709") and ct in ("", "bt709") and cs in ("", "bt709")
+                and cr in ("", "tv", "mpeg")):
+            return []
+        args: list[str] = []
+        if cp:
+            args += ["-color_primaries", cp]
+        if ct:
+            args += ["-color_trc", ct]
+        if cs:
+            args += ["-colorspace", cs]
+        if cr:
+            args += ["-color_range", cr]
+        return args
+    except Exception:
+        return []
+
+
 def start_ffmpeg(
     output: Path,
     video_path: Path,
@@ -184,6 +221,8 @@ def start_ffmpeg(
     fps: float,
     crf: int,
     preset: str,
+    pix_fmt: str = "yuv420p",
+    color_args: list[str] | None = None,
 ) -> subprocess.Popen:
     if shutil.which("ffmpeg") is None:
         fail("ffmpeg not found in PATH")
@@ -203,7 +242,8 @@ def start_ffmpeg(
         "-c:v", "libx264",
         "-preset", preset,
         "-crf", str(crf),
-        "-pix_fmt", "yuv420p",
+        "-pix_fmt", pix_fmt,
+    ] + (color_args or []) + [
         "-c:a", "copy",
         "-movflags", "+faststart",
         str(output),
@@ -416,7 +456,10 @@ def main() -> None:
 
     crf = int(cfg_get(render_cfg, "encoding.crf", 18))
     preset = str(cfg_get(render_cfg, "encoding.preset", "veryfast"))
-    process = start_ffmpeg(output_path, video_path, width, height, fps, crf, preset)
+    _env_pf = os.environ.get("AUTOMONTAGE_INTERMEDIATE_PIX_FMT") or ""
+    pix_fmt = str(_env_pf or cfg_get(render_cfg, "encoding.pix_fmt", None) or "yuv420p")
+    color_args = sdr_color_args(video_path)
+    process = start_ffmpeg(output_path, video_path, width, height, fps, crf, preset, pix_fmt, color_args)
     if process.stdin is None:
         fail("ffmpeg stdin is unavailable")
 

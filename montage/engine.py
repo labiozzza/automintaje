@@ -676,6 +676,47 @@ def render_montage(
         if _diag:
             ffmpeg_commands.append({"label": label, "cmd": [str(x) for x in cmd]})
 
+    # Stage B.1: intermediate pix_fmt switch (default stays yuv420p until accepted).
+    _inter_pix_fmt = str(os.environ.get("AUTOMONTAGE_INTERMEDIATE_PIX_FMT", "yuv420p").strip().lower())
+    if _inter_pix_fmt not in ("yuv420p", "yuv444p"):
+        print(f"[engine] unsupported AUTOMONTAGE_INTERMEDIATE_PIX_FMT={_inter_pix_fmt!r}, falling back to yuv420p")
+        _inter_pix_fmt = "yuv420p"
+
+    def _sdr_color_args(video: Path) -> list[str]:
+        # Copy color metadata only for SDR (bt709) sources. HDR/BT.2020/PQ/HLG
+        # tags are not copied onto 8-bit SDR output without tone mapping.
+        try:
+            import subprocess as _sp
+            out = _sp.check_output(
+                [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=color_primaries,color_transfer,color_space,color_range",
+                 "-of", "json", str(video)],
+                text=True, encoding="utf-8", errors="replace", timeout=30,
+            )
+            streams = json.loads(out or "{}").get("streams") or []
+            if not streams:
+                return []
+            st = streams[0]
+            cp = (st.get("color_primaries") or "").lower()
+            ct = (st.get("color_transfer") or "").lower()
+            cs = (st.get("color_space") or "").lower()
+            cr = (st.get("color_range") or "").lower()
+            if not (cp in ("", "bt709") and ct in ("", "bt709") and cs in ("", "bt709")
+                    and cr in ("", "tv", "mpeg")):
+                return []
+            args_l: list[str] = []
+            if cp:
+                args_l += ["-color_primaries", cp]
+            if ct:
+                args_l += ["-color_trc", ct]
+            if cs:
+                args_l += ["-colorspace", cs]
+            if cr:
+                args_l += ["-color_range", cr]
+            return args_l
+        except Exception:
+            return []
+
     # ---- Stage: normalise source rotation (iPhone .mov autorotate) ----
     # Apple stores orientation in the Display Matrix (side_data / displaymatrix),
     # so probe BOTH tags.rotate AND the side_data rotation before deciding.
@@ -787,7 +828,8 @@ def render_montage(
             _cmd = [
                 shutil.which("ffmpeg") or "ffmpeg", "-y", "-noautorotate", "-display_rotation:v:0", "0", "-i", str(source_video),
                 "-map", "0:v:0", "-map", "0:a:0?", "-vf", f"transpose={1 if _src_rot == 270 else 2},scale={_slot}:flags=lanczos",
-                "-c:v", "libx264", "-preset", "fast", "-crf", "0", "-pix_fmt", "yuv420p",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "0", "-pix_fmt", _inter_pix_fmt,
+            ] + _sdr_color_args(source_video) + [
                 "-c:a", "copy",
                 "-movflags", "+faststart",
                 str(_norm),
@@ -815,7 +857,8 @@ def render_montage(
         mirror_cmd = [
             shutil.which("ffmpeg") or "ffmpeg", "-y", "-i", str(source_video),
             "-map", "0:v:0", "-map", "0:a:0?", "-vf", "hflip",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "0", "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "0", "-pix_fmt", _inter_pix_fmt,
+        ] + _sdr_color_args(source_video) + [
             "-c:a", "copy", "-metadata:s:v:0", "rotate=0", "-movflags", "+faststart",
             str(mirrored_source),
         ]

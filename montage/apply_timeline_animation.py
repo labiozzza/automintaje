@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,7 +15,8 @@ from PIL import Image
 
 def ffprobe_meta(video: Path) -> dict:
     cmd = [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-show_entries",
-           "format=duration:stream=width,height,r_frame_rate,codec_type", "-of", "json", str(video)]
+           "format=duration:stream=width,height,r_frame_rate,codec_type,color_primaries,color_transfer,color_space,color_range",
+           "-of", "json", str(video)]
     result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     if result.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {result.stderr.strip()[-400:]}")
@@ -33,9 +35,16 @@ def ffprobe_meta(video: Path) -> dict:
             fps = num / den if den else 30.0
         except Exception:
             fps = 30.0
+        meta = {
+            "color_primaries": (stream.get("color_primaries") or "").lower(),
+            "color_transfer": (stream.get("color_transfer") or "").lower(),
+            "color_space": (stream.get("color_space") or "").lower(),
+            "color_range": (stream.get("color_range") or "").lower(),
+        }
         break
     frames = int(duration * fps)
-    return {"duration": duration, "fps": fps, "width": width, "height": height, "frames": frames}
+    return {"duration": duration, "fps": fps, "width": width, "height": height, "frames": frames,
+            **meta}
 
 
 def load_animation_frames(anim_dir: Path) -> tuple[list[Image.Image], float]:
@@ -101,6 +110,23 @@ def main() -> None:
     duration = float(meta["duration"] or 0.0)
     if total_frames <= 0 or width <= 0 or height <= 0:
         raise RuntimeError("Bad video metadata for timeline animation")
+
+    # SDR (bt709) metadata is passed through; HDR/BT.2020/PQ/HLG tags are NOT
+    # copied onto an 8-bit SDR output without tone mapping (Stage C).
+    _cp = str(meta.get("color_primaries") or "")
+    _ct = str(meta.get("color_transfer") or "")
+    _cs = str(meta.get("color_space") or "")
+    _cr = str(meta.get("color_range") or "")
+    if _cp in ("", "bt709") and _ct in ("", "bt709") and _cs in ("", "bt709") and _cr in ("", "tv", "mpeg"):
+        color_args = []
+        for _flag, _val in (("-color_primaries", _cp), ("-color_trc", _ct),
+                            ("-colorspace", _cs), ("-color_range", _cr)):
+            if _val:
+                color_args += [_flag, _val]
+    else:
+        color_args = []
+    _env_pf = os.environ.get("AUTOMONTAGE_INTERMEDIATE_PIX_FMT") or ""
+    pix_fmt = str(_env_pf or config.get("encoding", {}).get("pix_fmt") or "yuv420p")
 
     cap = cv2.VideoCapture(str(input_video))
     if not cap.isOpened():
@@ -180,7 +206,9 @@ def main() -> None:
             "-i", str(input_video),
             "-map", "0:v:0", "-map", "1:a:0?",
             "-c:v", "libx264", "-preset", "medium", "-crf", "0",
-            "-pix_fmt", "yuv420p", "-c:a", "copy",
+            "-pix_fmt", pix_fmt,
+        ] + color_args + [
+            "-c:a", "copy",
             "-movflags", "+faststart",
             str(output_video),
         ],
