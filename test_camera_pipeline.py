@@ -225,5 +225,61 @@ class SignatureTests(unittest.TestCase):
             app_module._validate_float_range("500", 0.0, 100.0, 30.0, "x")
 
 
+class TransformFramePanTests(unittest.TestCase):
+    """Job 999c0cdf regression: the ``clamp`` edge mode must not cancel the
+    camera pan.  With zoom 1.12 the crop window is 89% of the frame, so a
+    wide eye span needs the window partly outside the frame; clamping the
+    window origin erased the follow completely."""
+
+    @staticmethod
+    def ramp_frame(width=720, height=1280):
+        import numpy as np
+
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+        ramp = (np.arange(width) / max(1, width - 1) * 255).astype(np.uint8)
+        frame[:, :, 0] = ramp[None, :]
+        return frame
+
+    def _column_of_source_x(self, out, source_x):
+        import numpy as np
+
+        row = out[640, :, 0].astype(int)
+        expected = int(source_x / (row.size - 1) * 255)
+        return int(np.argmin(np.abs(row - expected)))
+
+    def test_clamp_mode_preserves_pan_beyond_frame(self):
+        from montage.apply_face_zoom_v5 import transform_frame
+
+        frame = self.ramp_frame()
+        anchor_x = 0.315  # real eye span of job 999c0cdf starts here
+        out = transform_frame(frame, anchor_x, 0.42, 1.12, 0.5, 0.42, "clamp")
+        # x1_px = 0.315*720 - 0.5*720/1.12 = -94.6 → source col 200 lands
+        # at (200 - x1_px) * 1.12 ≈ 330, NOT at the clamped 224.
+        col = self._column_of_source_x(out, 200)
+        self.assertAlmostEqual(col, 330, delta=3)
+
+    def test_pan_matches_anchor_shift(self):
+        from montage.apply_face_zoom_v5 import transform_frame
+
+        frame = self.ramp_frame()
+        left = transform_frame(frame, 0.315, 0.42, 1.12, 0.5, 0.42, "clamp")
+        right = transform_frame(frame, 0.486, 0.42, 1.12, 0.5, 0.42, "clamp")
+        # The background slides opposite the pan: source col 200 lands at
+        # ≈330 px for the left anchor and ≈192 px for the right one — the
+        # unclamped window pans the full eye span (≈171 source px).
+        col_left = self._column_of_source_x(left, 200)
+        col_right = self._column_of_source_x(right, 200)
+        self.assertGreater(col_left - col_right, 100)
+
+
+class StageOrderTests(unittest.TestCase):
+    def test_layers_render_before_subtitles(self):
+        plan = montage_plan({"subtitles": True, "overlays": [{"uid": "x"}]})
+        keys = [stage.key for stage in plan]
+        self.assertIn("animation", keys)
+        self.assertIn("subtitles", keys)
+        self.assertLess(keys.index("animation"), keys.index("subtitles"))
+
+
 if __name__ == "__main__":
     unittest.main()

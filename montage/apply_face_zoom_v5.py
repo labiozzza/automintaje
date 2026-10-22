@@ -605,14 +605,12 @@ def transform_frame(
     scale = 1.0 / zoom
 
     # Source coordinate that should land at the fixed eye position on output.
+    # The window may extend past the frame while the virtual camera pans;
+    # border fill keeps the promise of no black bars without killing the pan.
     x1 = anchor_x * width - eye_screen_x * width * scale
     y1 = anchor_y * height - eye_screen_y * height * scale
 
     if edge_mode == "clamp":
-        crop_w = width * scale
-        crop_h = height * scale
-        x1 = clamp(x1, 0.0, width - crop_w)
-        y1 = clamp(y1, 0.0, height - crop_h)
         border_mode = cv2.BORDER_REPLICATE
     else:
         border_mode = EDGE_MODES[edge_mode]

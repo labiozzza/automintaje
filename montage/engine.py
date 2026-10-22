@@ -997,51 +997,9 @@ def render_montage(
         base_video = source_video
 
     # ---- Stage: subtitles ----
-    outputs: dict[str, Path] = {}
-    if do_subtitles:
-        selected_font = str(options.get("subtitle_font") or "")
-        allowed_fonts = {item["path"] for item in font_options()}
-        font = Path(selected_font) if selected_font in allowed_fonts else (DEFAULT_FONT if DEFAULT_FONT.exists() else None)
-        configs = {
-            "sentences": ("subtitle_timeline_config.json", "sub_sentences.mp4"),
-            "words": ("subtitle_timeline_config_words.json", "sub_words.mp4"),
-            "phrases": ("subtitle_timeline_config_phrases.json", "sub_phrases.mp4"),
-        }
-        config_name, out_name = configs.get(subtitle_mode, configs["sentences"])
-        out_mp4 = workdir / out_name
-        _start("subtitles", "Наложение цветных субтитров...")
-        cmd = [
-            PYTHON, "-u", str(MONAGE_DIR / "apply_auto_subtitles_v2.py"),
-            "--config", str(workdir / config_name),
-            "--video", str(base_video),
-            "--output", str(out_mp4),
-        ]
-        if font:
-            cmd += ["--font", str(font)]
-        def sub_line(line: str) -> None:
-            if "progress:" in line or "frame=" in line:
-                try:
-                    prefix = line.split("(")[-1].split("%")[0].strip()
-                    source_pct = max(0.0, min(100.0, float(prefix)))
-                    _upd("subtitles", source_pct, line.strip()[:140])
-                except Exception:
-                    _upd("subtitles", None, line.strip()[:140])
-        code = run_cmd(cmd, cwd=workdir, log_path=workdir / "subtitles.log", line_cb=sub_line, job_id=job_id)
-        if code != 0:
-            raise RuntimeError("Наложение субтитров не удалось")
-        outputs[subtitle_mode] = out_mp4
-        _done("subtitles", "Субтитры готовы")
-    else:
-        _skip("subtitles", "Субтитры отключены")
-        outputs["video"] = base_video
-
-    final_mp4 = outputs.get(subtitle_mode) or outputs.get("video")
-    if final_mp4 is None or not Path(final_mp4).exists():
-        raise RuntimeError("Не создан итоговый файл")
-    final_mp4 = Path(final_mp4)
-
-    # Overlay compositing deliberately runs after mirroring. Only the source video
-    # is flipped; overlay artwork always keeps its original orientation.
+    # Overlay compositing deliberately runs after mirroring and BEFORE
+    # subtitles: only the source video is flipped; overlay artwork always
+    # keeps its original orientation, and subtitles are drawn last (on top).
     used_overlays: list[dict[str, Any]] = []
     for index, raw in enumerate(overlays_cfg[:20]):
         if not isinstance(raw, dict):
@@ -1095,12 +1053,15 @@ def render_montage(
     if used_animations:
         used_animation = dict(used_animations[0])
 
+    # Visual layers composite BEFORE subtitles on purpose: subtitles are drawn
+    # last so no overlay or animation can ever cover them.
+    layered_video = base_video
     if render_layers:
         _start("animation", f"Рендер визуальных слоёв: {len(render_layers)}...")
         anim_out = workdir / "with_visual_layers.mp4"
         overlay_config = workdir / "overlay_timeline_config.json"
         overlay_config.write_text(json.dumps({
-            "video": str(final_mp4.resolve()),
+            "video": str(base_video.resolve()),
             "output": str(anim_out.resolve()),
             "animations_dir": str(ANIMATIONS_DIR.resolve()),
             "overlays": render_layers,
@@ -1121,10 +1082,53 @@ def render_montage(
         code = run_cmd(cmd, cwd=workdir, log_path=workdir / "animation.log", line_cb=anim_line, job_id=job_id)
         if code != 0:
             raise RuntimeError("Рендер визуальных слоёв не удался")
-        final_mp4 = anim_out
+        layered_video = anim_out
         _done("animation", "Визуальные слои готовы")
     else:
         _skip("animation", "Нет слоёв для наложения")
+
+    outputs: dict[str, Path] = {}
+    if do_subtitles:
+        selected_font = str(options.get("subtitle_font") or "")
+        allowed_fonts = {item["path"] for item in font_options()}
+        font = Path(selected_font) if selected_font in allowed_fonts else (DEFAULT_FONT if DEFAULT_FONT.exists() else None)
+        configs = {
+            "sentences": ("subtitle_timeline_config.json", "sub_sentences.mp4"),
+            "words": ("subtitle_timeline_config_words.json", "sub_words.mp4"),
+            "phrases": ("subtitle_timeline_config_phrases.json", "sub_phrases.mp4"),
+        }
+        config_name, out_name = configs.get(subtitle_mode, configs["sentences"])
+        out_mp4 = workdir / out_name
+        _start("subtitles", "Наложение цветных субтитров...")
+        cmd = [
+            PYTHON, "-u", str(MONAGE_DIR / "apply_auto_subtitles_v2.py"),
+            "--config", str(workdir / config_name),
+            "--video", str(layered_video),
+            "--output", str(out_mp4),
+        ]
+        if font:
+            cmd += ["--font", str(font)]
+        def sub_line(line: str) -> None:
+            if "progress:" in line or "frame=" in line:
+                try:
+                    prefix = line.split("(")[-1].split("%")[0].strip()
+                    source_pct = max(0.0, min(100.0, float(prefix)))
+                    _upd("subtitles", source_pct, line.strip()[:140])
+                except Exception:
+                    _upd("subtitles", None, line.strip()[:140])
+        code = run_cmd(cmd, cwd=workdir, log_path=workdir / "subtitles.log", line_cb=sub_line, job_id=job_id)
+        if code != 0:
+            raise RuntimeError("Наложение субтитров не удалось")
+        outputs[subtitle_mode] = out_mp4
+        _done("subtitles", "Субтитры готовы")
+    else:
+        _skip("subtitles", "Субтитры отключены")
+        outputs["video"] = layered_video
+
+    final_mp4 = outputs.get(subtitle_mode) or outputs.get("video")
+    if final_mp4 is None or not Path(final_mp4).exists():
+        raise RuntimeError("Не создан итоговый файл")
+    final_mp4 = Path(final_mp4)
 
     if not usable_video(final_mp4):
         raise RuntimeError("Не создан пригодный итоговый файл")

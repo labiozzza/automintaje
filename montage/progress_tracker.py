@@ -366,14 +366,14 @@ def montage_plan(options: Dict[str, Any]) -> List[Stage]:
     if zoom_stage:
         stages.append(Stage("faces", "Отслеживание лица", 15.0))
         stages.append(Stage("zoom", "Автозум и камера", 12.0))
-    if options.get("subtitles", True):
-        stages.append(Stage("subtitles", "Создание субтитров", 20.0))
     overlays = options.get("overlays") if isinstance(options.get("overlays"), list) else []
     animation = options.get("animation") or {}
     animations = options.get("animations") if isinstance(options.get("animations"), list) else []
     if overlays or bool(animation.get("enabled")) or any(
             isinstance(entry, dict) and entry.get("id") for entry in animations):
         stages.append(Stage("animation", "Наложения и анимации", 8.0))
+    if options.get("subtitles", True):
+        stages.append(Stage("subtitles", "Создание субтитров", 20.0))
     if options.get("blur_banned_words"):
         stages.append(Stage("audio_censor", "Заглушение нежелательных слов", 3.0))
     stages.append(Stage("finalize", "Финальное кодирование", 22.0))
