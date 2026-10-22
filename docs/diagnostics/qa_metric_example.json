@@ -1,0 +1,120 @@
+{
+  "reference": "montage_work/9a7cf622/project_video.MOV",
+  "distorted": [
+    {
+      "path": "montage_work/9a7cf622/project_video.MOV",
+      "probe": {
+        "path": "montage_work/9a7cf622/project_video.MOV",
+        "format": {
+          "container": "mov,mp4,m4a,3gp,3g2,mj2",
+          "duration": 7.266667,
+          "size_bytes": 7018205,
+          "bit_rate": 7726463,
+          "tags": {
+            "major_brand": "qt  ",
+            "minor_version": "0",
+            "compatible_brands": "qt  ",
+            "creation_time": "2026-09-24T12:42:23.000000Z",
+            "com.apple.quicktime.location.accuracy.horizontal": "11.101240",
+            "com.apple.quicktime.full-frame-rate-playback-intent": "0",
+            "com.apple.quicktime.location.ISO6709": "+57.0917+065.6085+076.266/",
+            "com.apple.quicktime.make": "Apple",
+            "com.apple.quicktime.model": "iPhone 11",
+            "com.apple.quicktime.software": "26.3.1",
+            "com.apple.quicktime.creationdate": "2026-09-24T17:42:23+0500"
+          }
+        },
+        "video": {
+          "codec": "hevc",
+          "profile": "Main",
+          "level": 93,
+          "width": 1280,
+          "height": 720,
+          "pix_fmt": "yuv420p",
+          "bit_depth": null,
+          "r_frame_rate": "30/1",
+          "avg_frame_rate": "30/1",
+          "time_base": "1/600",
+          "color_range": "tv",
+          "color_space": "bt709",
+          "color_transfer": "bt709",
+          "color_primaries": "bt709",
+          "duration": 7.266667,
+          "nb_frames": "218"
+        },
+        "audio": {
+          "codec": "aac",
+          "channels": 2,
+          "sample_rate": "48000",
+          "bit_rate": "182381"
+        }
+      },
+      "metrics": {
+        "psnr": {
+          "average": Infinity,
+          "metric": "psnr",
+          "reference": "montage_work/9a7cf622/project_video.MOV",
+          "distorted": "montage_work/9a7cf622/project_video.MOV",
+          "log_path": "/tmp/qa_wd2/psnr.log",
+          "ffmpeg_returncode": 0
+        },
+        "ssim": {
+          "all": 1.0,
+          "y": 1.0,
+          "metric": "ssim",
+          "reference": "montage_work/9a7cf622/project_video.MOV",
+          "distorted": "montage_work/9a7cf622/project_video.MOV",
+          "log_path": "/tmp/qa_wd2/ssim.log",
+          "ffmpeg_returncode": 0
+        }
+      }
+    }
+  ],
+  "reference_probe": {
+    "path": "montage_work/9a7cf622/project_video.MOV",
+    "format": {
+      "container": "mov,mp4,m4a,3gp,3g2,mj2",
+      "duration": 7.266667,
+      "size_bytes": 7018205,
+      "bit_rate": 7726463,
+      "tags": {
+        "major_brand": "qt  ",
+        "minor_version": "0",
+        "compatible_brands": "qt  ",
+        "creation_time": "2026-09-24T12:42:23.000000Z",
+        "com.apple.quicktime.location.accuracy.horizontal": "11.101240",
+        "com.apple.quicktime.full-frame-rate-playback-intent": "0",
+        "com.apple.quicktime.location.ISO6709": "+57.0917+065.6085+076.266/",
+        "com.apple.quicktime.make": "Apple",
+        "com.apple.quicktime.model": "iPhone 11",
+        "com.apple.quicktime.software": "26.3.1",
+        "com.apple.quicktime.creationdate": "2026-09-24T17:42:23+0500"
+      }
+    },
+    "video": {
+      "codec": "hevc",
+      "profile": "Main",
+      "level": 93,
+      "width": 1280,
+      "height": 720,
+      "pix_fmt": "yuv420p",
+      "bit_depth": null,
+      "r_frame_rate": "30/1",
+      "avg_frame_rate": "30/1",
+      "time_base": "1/600",
+      "color_range": "tv",
+      "color_space": "bt709",
+      "color_transfer": "bt709",
+      "color_primaries": "bt709",
+      "duration": 7.266667,
+      "nb_frames": "218"
+    },
+    "audio": {
+      "codec": "aac",
+      "channels": 2,
+      "sample_rate": "48000",
+      "bit_rate": "182381"
+    }
+  },
+  "workdir": "/tmp/qa_wd2"
+}

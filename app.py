@@ -1237,6 +1237,16 @@ def _cleanup_allowed_paths(job_id: str, job: dict, phase: str, candidates: list[
 
 
 def _cleanup_render_artifacts(job_id: str, job: dict) -> dict:
+    # Diagnostic mode: keep intermediates for quality audit.
+    if os.environ.get("AUTOMONTAGE_KEEP_INTERMEDIATES", "").strip().lower() in ("1", "true", "yes"):
+        try:
+            workdir = _safe_montage_workdir(job_id)
+            _write_cleanup_log(workdir, {"phase": "render", "removed": [], "protected": [],
+                                         "errors": [], "kept": "diagnostic mode"})
+        except Exception:
+            pass
+        return {"phase": "render", "removed": [], "protected": [], "errors": [],
+                "kept": "diagnostic mode (AUTOMONTAGE_KEEP_INTERMEDIATES)"}
     # The unified pipeline keeps ``status`` at ``processing`` while the optional
     # mirror / preparation phases run, so render artefacts are cleaned up as soon
     # as the main result exists (status ``processing`` or ``done``).
@@ -1258,6 +1268,15 @@ def _cleanup_render_artifacts(job_id: str, job: dict) -> dict:
 
 
 def _cleanup_publish_artifacts(job_id: str, job: dict) -> dict:
+    if os.environ.get("AUTOMONTAGE_KEEP_INTERMEDIATES", "").strip().lower() in ("1", "true", "yes"):
+        try:
+            workdir = _safe_montage_workdir(job_id)
+            _write_cleanup_log(workdir, {"phase": "publish", "removed": [], "protected": [],
+                                         "errors": [], "kept": "diagnostic mode"})
+        except Exception:
+            pass
+        return {"phase": "publish", "removed": [], "protected": [], "errors": [],
+                "kept": "diagnostic mode (AUTOMONTAGE_KEEP_INTERMEDIATES)"}
     if job.get("status") != "done" or job.get("stage") != "published" or job.get("publish_errors"):
         return {"phase": "publish", "removed": [], "protected": [], "errors": []}
     try:

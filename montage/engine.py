@@ -667,6 +667,15 @@ def render_montage(
     transcript = Path(workdir) / f"{job_id}_words.srt"
     transcript.write_text(srt_text, encoding="utf-8")
 
+    # Diagnostic mode: collect every ffmpeg/worker command for later audit.
+    # Activated by AUTOMONTAGE_DIAGNOSTIC=1 or AUTOMONTAGE_KEEP_INTERMEDIATES=1.
+    _diag = os.environ.get("AUTOMONTAGE_DIAGNOSTIC", "").strip().lower() in ("1", "true", "yes") \
+        or os.environ.get("AUTOMONTAGE_KEEP_INTERMEDIATES", "").strip().lower() in ("1", "true", "yes")
+    ffmpeg_commands: list[dict[str, Any]] = []
+    def _record_cmd(label: str, cmd: list) -> None:
+        if _diag:
+            ffmpeg_commands.append({"label": label, "cmd": [str(x) for x in cmd]})
+
     # ---- Stage: normalise source rotation (iPhone .mov autorotate) ----
     # Apple stores orientation in the Display Matrix (side_data / displaymatrix),
     # so probe BOTH tags.rotate AND the side_data rotation before deciding.
@@ -783,6 +792,7 @@ def render_montage(
                 "-movflags", "+faststart",
                 str(_norm),
             ]
+            _record_cmd("rotate", _cmd)
             _code = run_ffmpeg_progress(_cmd, duration=_duration, cwd=workdir,
                                         log_path=workdir / "rotate.log",
                                         on_progress=lambda p: _upd("rotate", p),
@@ -809,6 +819,7 @@ def render_montage(
             "-c:a", "copy", "-metadata:s:v:0", "rotate=0", "-movflags", "+faststart",
             str(mirrored_source),
         ]
+        _record_cmd("mirror", mirror_cmd)
         code = run_ffmpeg_progress(mirror_cmd, duration=_duration, cwd=workdir,
                                    log_path=workdir / "mirror.log",
                                    on_progress=lambda p: _upd("mirror", p),
@@ -977,6 +988,7 @@ def render_montage(
             "--zoom-source", "timeline",
             "--edge-mode", edge_mode,
         ] + ([ "--tracking", tracking_arg] if tracking_arg else [])
+        _record_cmd("zoom", cmd)
         def zoom_line(line: str) -> None:
             if "processed" in line:
                 match = [p for p in line.split() if "/" in p]
@@ -1071,6 +1083,7 @@ def render_montage(
             "--config", str(overlay_config),
         ]
 
+        _record_cmd("animation", cmd)
         def anim_line(line: str) -> None:
             if "processed" in line:
                 try:
@@ -1116,6 +1129,7 @@ def render_montage(
                     _upd("subtitles", source_pct, line.strip()[:140])
                 except Exception:
                     _upd("subtitles", None, line.strip()[:140])
+        _record_cmd("subtitles", cmd)
         code = run_cmd(cmd, cwd=workdir, log_path=workdir / "subtitles.log", line_cb=sub_line, job_id=job_id)
         if code != 0:
             raise RuntimeError("Наложение субтитров не удалось")
@@ -1147,6 +1161,7 @@ def render_montage(
                 "-af", build_volume_filter(muted_intervals),
                 "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(censored_mp4),
             ]
+            _record_cmd("audio_censor", censor_cmd)
             censor_proc = subprocess.Popen(censor_cmd, stdout=subprocess.DEVNULL,
                                             stderr=subprocess.PIPE, cwd=str(workdir))
             register_job_proc(job_id, censor_proc)
@@ -1192,6 +1207,8 @@ def render_montage(
         "-profile:v", "high", "-level:v", "4.1", "-preset", "medium", "-crf", "12",
         "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(preview_mp4),
     ]
+    _record_cmd("finalize_hevc", delivery_cmd)
+    _record_cmd("preview_h264", preview_cmd)
     _start("finalize", "Кодирование финального файла (H.265)...")
     _start("preview", "Кодирование версии для просмотра (H.264)...")
 
@@ -1301,6 +1318,15 @@ def render_montage(
     meta["warnings"] = warnings
     tracker.finish("Рендер завершён с предупреждениями" if warnings else "Рендер завершён")
     _emit()
+    # Diagnostic mode: persist collected ffmpeg commands.
+    if _diag and ffmpeg_commands:
+        try:
+            (workdir / "ffmpeg_commands.json").write_text(
+                json.dumps(ffmpeg_commands, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
     return meta
 
 
