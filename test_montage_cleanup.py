@@ -452,7 +452,10 @@ class MontageCleanupTests(unittest.TestCase):
         self.assertIn("sub_words.mp4", summary["protected"])
         self.assertTrue((workdir / "sub_words.mp4").is_file())
 
-    def test_publish_cleanup_releases_master_after_publish(self):
+    def test_publish_cleanup_keeps_master_after_publish(self):
+        # Retention policy: a successful first publication must not delete the
+        # master source — later platforms (YouTube / Telegram) still prepare
+        # from it.  Removal is the retention policy's decision only.
         job, workdir = self.make_job(job_id="master04")
         master_inplace = workdir / "sub_words.mp4"
         master_inplace.write_bytes(b"master-stream")
@@ -464,8 +467,13 @@ class MontageCleanupTests(unittest.TestCase):
         summary = app._cleanup_publish_artifacts(job["id"], job)
 
         self.assertFalse(summary["errors"])
-        self.assertIn(master_inplace.name, summary["removed"])
-        self.assertFalse(master_inplace.exists())
+        self.assertNotIn(master_inplace.name, summary["removed"])
+        self.assertTrue(master_inplace.exists())
+
+        # A second sequential publication (another platform) keeps it as well.
+        second = app._cleanup_publish_artifacts(job["id"], job)
+        self.assertFalse(second["errors"])
+        self.assertTrue(master_inplace.exists())
 
         # With publish errors the master must be kept for a retry.
         job, workdir = self.make_job(job_id="master05")

@@ -1151,13 +1151,11 @@ def _safe_montage_workdir(job_id: str) -> Path:
 def _protected_montage_paths(job: dict, workdir: Path) -> set[Path]:
     protected = set()
     result = job.get("result") or {}
-    keys = ["result_video", "preview_video"]
-    # The master source is kept alive until the job reaches a settled publish
-    # state; once everything is published the storage policy releases it (no
-    # unbounded accumulation of intermediary files).
-    settled = job.get("stage") == "published" and not job.get("publish_errors")
-    if not settled:
-        keys.append("master_video")
+    # The master source is never released by the cleanup routines: publishing
+    # on one platform must not destroy the source needed by other platforms
+    # (spec B.2).  Its lifetime is governed solely by the master retention
+    # policy (_retire_masters), and only for fully settled jobs.
+    keys = ["result_video", "preview_video", "master_video"]
     for key in keys:
         raw = result.get(key)
         if not raw:
@@ -1303,16 +1301,164 @@ def _cleanup_publish_artifacts(job_id: str, job: dict) -> dict:
             (workdir / "staging", True),
             (workdir / "youtube_staging", True),
             (workdir / f"{job_id}_tg.mp4", False),
-            (workdir / "master.mp4", False),
         ]
-        master = _master_video_path(job)
-        if master is not None and master.parent == workdir:
-            candidates.append((master, False))
-        return _cleanup_allowed_paths(job_id, job, "publish", candidates)
+        summary = _cleanup_allowed_paths(job_id, job, "publish", candidates)
+        _maybe_retire_masters()
+        return summary
     except Exception as exc:
         summary = {"phase": "publish", "removed": [], "protected": [], "errors": [str(exc)]}
         _write_cleanup_log(workdir, summary)
         return summary
+
+
+_MASTER_RETENTION_LOCK = threading.Lock()
+_MASTER_RETENTION_MAX_AGE_DAYS_DEFAULT = 7.0
+_MASTER_RETENTION_MAX_TOTAL_BYTES_DEFAULT = 2 * 1024 * 1024 * 1024
+_MASTER_RETENTION_MIN_FREE_BYTES_DEFAULT = 1 * 1024 * 1024 * 1024
+
+
+def _retention_env_value(name: str, default: float) -> float:
+    """Numeric env override for the master retention policy (non-negative)."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return float(default)
+    try:
+        value = float(raw)
+    except ValueError:
+        return float(default)
+    return max(value, 0.0)
+
+
+def _master_retention_settings() -> tuple[float, int, int]:
+    """Age/size/free-space limits that decide when a settled master may go.
+
+    ``AUTOMONTAGE_MASTER_MAX_AGE_DAYS`` (0 disables age pruning),
+    ``AUTOMONTAGE_MASTER_MAX_TOTAL_BYTES`` (0 disables the total-size ceiling)
+    and ``AUTOMONTAGE_MASTER_MIN_FREE_BYTES`` (0 disables the low-space prune).
+    """
+    max_age_days = _retention_env_value(
+        "AUTOMONTAGE_MASTER_MAX_AGE_DAYS", _MASTER_RETENTION_MAX_AGE_DAYS_DEFAULT)
+    max_total_bytes = _retention_env_value(
+        "AUTOMONTAGE_MASTER_MAX_TOTAL_BYTES", _MASTER_RETENTION_MAX_TOTAL_BYTES_DEFAULT)
+    min_free_bytes = _retention_env_value(
+        "AUTOMONTAGE_MASTER_MIN_FREE_BYTES", _MASTER_RETENTION_MIN_FREE_BYTES_DEFAULT)
+    return max_age_days, int(max_total_bytes), int(min_free_bytes)
+
+
+def _retire_masters() -> dict:
+    """Apply the master retention policy across every persisted montage job.
+
+    Only fully settled jobs (published, no errors and no unknown outcomes) may
+    lose their master; unfinished, partially published or errored jobs always
+    keep it so retry / second-platform publishing still uses the same quality
+    source.  Deletes run oldest-first by age, then for low free disk space,
+    then when the total master volume exceeds its ceiling.
+    """
+    if not _MASTER_RETENTION_LOCK.acquire(blocking=False):
+        return {"phase": "master_retention", "removed": [], "errors": [],
+                "skipped": "already running"}
+    try:
+        max_age_days, max_total_bytes, min_free_bytes = _master_retention_settings()
+        summary: dict = {"phase": "master_retention", "removed": [], "kept": [],
+                         "errors": []}
+        candidates: list[dict] = []
+        for state_path in sorted(MONTAGE_WORK.glob("*/job_state.json")):
+            try:
+                job = json.loads(state_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if job.get("kind") != "montage":
+                continue
+            settled = (
+                job.get("stage") == "published"
+                and not (job.get("publish_errors") or {})
+                and not (job.get("publish_unknown") or {})
+            )
+            if not settled:
+                continue
+            path = _master_video_path(job)
+            if path is None:
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            candidates.append({
+                "job_id": job.get("id"),
+                "path": path,
+                "size": int(stat.st_size),
+                "mtime": float(stat.st_mtime),
+            })
+
+        def _remove(entry: dict, reason: str) -> bool:
+            label = f"{entry['job_id']}/{entry['path'].name}"
+            try:
+                entry["path"].unlink()
+            except FileNotFoundError:
+                pass
+            except Exception as exc:
+                summary["errors"].append(f"{label}: {exc}")
+                return False
+            summary["removed"].append(f"{label} ({reason})")
+            return True
+
+        now = time.time()
+        if max_age_days > 0:
+            deadline = now - max_age_days * 86400.0
+            for entry in list(candidates):
+                if entry["mtime"] < deadline and _remove(entry, f"age>{max_age_days}d"):
+                    candidates.remove(entry)
+
+        if min_free_bytes > 0 and candidates:
+            try:
+                free_bytes = int(shutil.disk_usage(MONTAGE_WORK).free)
+            except Exception:
+                free_bytes = 0
+            for entry in sorted(candidates, key=lambda item: (item["mtime"], str(item["job_id"]))):
+                if free_bytes >= min_free_bytes:
+                    break
+                if _remove(entry, f"low free space ({free_bytes} bytes)"):
+                    candidates.remove(entry)
+                    free_bytes += entry["size"]
+
+        if max_total_bytes > 0 and candidates:
+            total = sum(entry["size"] for entry in candidates)
+            for entry in sorted(candidates, key=lambda item: (item["mtime"], str(item["job_id"]))):
+                if total <= max_total_bytes:
+                    break
+                if _remove(entry, f"total size {total} > {max_total_bytes}"):
+                    candidates.remove(entry)
+                    total -= entry["size"]
+
+        for entry in candidates:
+            summary["kept"].append(f"{entry['job_id']}/{entry['path'].name}")
+        if summary["removed"] or summary["errors"]:
+            print(f"[master-retention] {json.dumps(summary, ensure_ascii=False)}", file=sys.stderr)
+        return summary
+    finally:
+        _MASTER_RETENTION_LOCK.release()
+
+
+def _maybe_retire_masters() -> None:
+    """Run the retention sweep without blocking a running event loop."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is None:
+        try:
+            _retire_masters()
+        except Exception as exc:
+            print(f"[master-retention] sweep failed: {exc}", file=sys.stderr)
+        return
+
+    async def _run() -> None:
+        try:
+            await asyncio.to_thread(_retire_masters)
+        except Exception as exc:
+            print(f"[master-retention] background sweep failed: {exc}", file=sys.stderr)
+
+    loop.create_task(_run())
 
 
 def _run_cleanup_safely(cleanup, job_id: str, job: dict) -> dict:
@@ -1963,10 +2109,14 @@ async def process_prepare_publish(job_id: str, targets: list, cover_path: Option
     # variant.  Its absence is never a reason to render here (publishing and
     # preparation never mirror) — drop those needs so the remaining targets are
     # still prepared; publish reports the missing mirrored targets per target.
-    unresolved = [
-        item for item in needs
-        if item["kind"] == "video" and _prep_source_video(job, item["mirrored"]) is None
-    ]
+    # Resolution reads the master / mirror files (ffprobe inside
+    # usable_video), so keep it off the event loop.
+    unresolved: list[dict] = []
+    for item in needs:
+        if item["kind"] != "video":
+            continue
+        if await asyncio.to_thread(_prep_source_video, job, item["mirrored"]) is None:
+            unresolved.append(item)
     if unresolved:
         needs = [item for item in needs if item not in unresolved]
 
@@ -2004,11 +2154,11 @@ async def process_prepare_publish(job_id: str, targets: list, cover_path: Option
             key = item["key"]
             tracker.start(key, "Подготовка")
             if item["kind"] == "video":
-                source = _prep_source_video(job, item["mirrored"])
+                source = await asyncio.to_thread(_prep_source_video, job, item["mirrored"])
                 if source is None:
                     tracker.skip(key, "Источник ещё не готов")
                     continue
-                existing = _prepared_video_entry(job, item["purpose"], item["mirrored"])
+                existing = await asyncio.to_thread(_prepared_video_entry, job, item["purpose"], item["mirrored"])
                 if existing is not None:
                     tracker.complete(key, "Уже подготовлено")
                     continue
@@ -2393,6 +2543,11 @@ def _recover_montage_jobs() -> None:
         _save_montage_job(job_id)
         _run_cleanup_safely(_cleanup_render_artifacts, job_id, jobs[job_id])
 
+    # Master retention after restart: expired masters of fully settled jobs
+    # are pruned here, live ones survive and stay available for the next
+    # platform preparation.
+    _maybe_retire_masters()
+
 
 _recover_montage_jobs()
 _recover_transcription_projects()
@@ -2750,7 +2905,7 @@ async def process_publish(job_id: str, targets: list, publish_lock: Optional[asy
         # Publishing only sends ready files: resolve the artefacts produced by
         # the preparation stage.  Anything missing is reported per target
         # instead of transcoding here (spec: publish must not run FFmpeg).
-        prepared_targets, missing_targets = _publish_readiness(job, targets)
+        prepared_targets, missing_targets = await asyncio.to_thread(_publish_readiness, job, targets)
         for item in missing_targets:
             target_id = item.get("target")
             if target_id and target_id in job["publish_progress"]:
@@ -3459,7 +3614,7 @@ async def publish_montage(
     # 6) — the user never presses a separate "prepare" button.  Mirrored targets
     # whose mirror variant was never rendered cannot be produced here (publish
     # and preparation never mirror); they fail per target with a clear reason.
-    _, missing_targets = _publish_readiness(job, targets)
+    _, missing_targets = await asyncio.to_thread(_publish_readiness, job, targets)
     preparable_ids = {
         item.get("target") for item in missing_targets
         if item.get("reason") in {"video_not_ready", "cover_not_ready"}
@@ -3627,6 +3782,9 @@ async def montage_result(job_id: str):
     if job_id not in jobs or jobs[job_id].get("kind") != "montage":
         raise HTTPException(404, "Montage job not found")
     job = jobs[job_id]
+    # ffprobe inside the readiness probes must not stall the event loop.
+    publish_ready = await asyncio.to_thread(_public_publish_ready, job)
+    mirrored_ready = await asyncio.to_thread(mirror_variant_ready, job)
     return {
         "id": job_id,
         "status": job["status"],
@@ -3653,9 +3811,9 @@ async def montage_result(job_id: str):
         "prepare_operation": job.get("prepare_operation"),
         "prepare_status": job.get("prepare_status") or "idle",
         "prepare_error": job.get("prepare_error"),
-        "publish_ready": _public_publish_ready(job),
+        "publish_ready": publish_ready,
         "mirror_variant": _public_mirror_variant(job),
-        "variants": {"mirrored_ready": mirror_variant_ready(job)},
+        "variants": {"mirrored_ready": mirrored_ready},
     }
 
 

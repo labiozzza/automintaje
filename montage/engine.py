@@ -650,6 +650,50 @@ def timeline_animation_layers(entries: list) -> tuple[list, list]:
     return layers, used
 
 
+def _resolve_master_export(raw_mode: str, final_mp4, workdir,
+                           free_bytes: int | None = None) -> tuple[str, str]:
+    """Validate ``AUTOMONTAGE_MASTER_MODE`` and record the master stream name.
+
+    The fully effected stream (rotate/transpose, mirror, zoom, overlays,
+    subtitles and the optional audio censoring) already exists as
+    ``final_mp4``; recording it as the master source adds no extra encode
+    pass.  ``copy`` mode additionally places a byte-exact duplicate into
+    ``<workdir>/master.mp4`` (gated by a free-disk-space check); ``none``
+    disables master tracking entirely.  Unknown mode values fall back to
+    ``inplace``; a failed or too-large ``copy`` falls back as well.
+
+    Returns ``(master_mode, recorded_name)``; the recorded name is empty for
+    ``none`` mode.
+    """
+    mode = str(raw_mode or "inplace").strip().lower()
+    if mode not in ("inplace", "copy", "none"):
+        print(f"[master] unknown AUTOMONTAGE_MASTER_MODE \"{mode}\", fallback: inplace", file=sys.stderr)
+        mode = "inplace"
+    master_video_name = ""
+    if mode == "copy":
+        try:
+            needed_bytes = int(Path(final_mp4).stat().st_size) + 64 * 1024 * 1024
+            if free_bytes is None:
+                free_bytes = int(shutil.disk_usage(workdir).free)
+        except Exception:
+            needed_bytes, free_bytes = 0, 0
+        if free_bytes >= needed_bytes:
+            try:
+                master_out = workdir / "master.mp4"
+                shutil.copy2(final_mp4, master_out)
+                master_video_name = master_out.name
+            except Exception as exc:
+                print(f"[master] copy failed, fallback: inplace ({exc})", file=sys.stderr)
+        else:
+            print(f"[master] not enough disk space for copy, fallback: inplace "
+                  f"(free {free_bytes} < needed {needed_bytes})", file=sys.stderr)
+        if not master_video_name:
+            mode = "inplace"
+    if mode == "inplace":
+        master_video_name = Path(final_mp4).name
+    return mode, master_video_name
+
+
 def render_montage(
     *,
     job_id: str,
@@ -1236,37 +1280,13 @@ def render_montage(
         _skip("audio_censor", "Заглушение не требуется")
 
     # ---- Master export source -------------------------------------------
-    # The fully effected stream (rotate/transpose, mirror, zoom, overlays,
-    # subtitles and the optional audio censoring) already exists as
-    # ``final_mp4``; recording it as the master source adds no extra encode
-    # pass.  ``copy`` mode additionally places a byte-exact duplicate into
-    # ``<workdir>/master.mp4`` (gated by a free-disk-space check); ``none``
-    # disables master tracking entirely.
-    master_mode = str(os.environ.get("AUTOMONTAGE_MASTER_MODE") or "inplace").strip().lower()
-    if master_mode not in ("inplace", "copy", "none"):
-        print(f"[master] unknown AUTOMONTAGE_MASTER_MODE \"{master_mode}\", fallback: inplace", file=sys.stderr)
-        master_mode = "inplace"
-    master_video_name = ""
-    if master_mode == "copy":
-        try:
-            needed_bytes = int(Path(final_mp4).stat().st_size) + 64 * 1024 * 1024
-            free_bytes = int(shutil.disk_usage(workdir).free)
-        except Exception:
-            needed_bytes, free_bytes = 0, 0
-        if free_bytes >= needed_bytes:
-            try:
-                master_out = workdir / "master.mp4"
-                shutil.copy2(final_mp4, master_out)
-                master_video_name = master_out.name
-            except Exception as exc:
-                print(f"[master] copy failed, fallback: inplace ({exc})", file=sys.stderr)
-        else:
-            print(f"[master] not enough disk space for copy, fallback: inplace "
-                  f"(free {free_bytes} < needed {needed_bytes})", file=sys.stderr)
-        if not master_video_name:
-            master_mode = "inplace"
-    if master_mode == "inplace":
-        master_video_name = Path(final_mp4).name
+    # Recording the master source adds no extra encode pass; see
+    # ``_resolve_master_export`` for the mode fallback rules (unknown mode and
+    # failed/oversized copy fall back to ``inplace``; ``none`` disables master
+    # tracking entirely).
+    master_mode, master_video_name = _resolve_master_export(
+        str(os.environ.get("AUTOMONTAGE_MASTER_MODE") or "inplace"),
+        final_mp4, workdir)
 
     delivery_mp4 = workdir / "final.mp4"
     delivery_cmd = [
