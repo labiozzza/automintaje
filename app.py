@@ -1316,6 +1316,41 @@ _MASTER_RETENTION_MAX_AGE_DAYS_DEFAULT = 7.0
 _MASTER_RETENTION_MAX_TOTAL_BYTES_DEFAULT = 2 * 1024 * 1024 * 1024
 _MASTER_RETENTION_MIN_FREE_BYTES_DEFAULT = 1 * 1024 * 1024 * 1024
 
+# Master files currently read by in-flight platform preparations (job ids).
+# Guarded by _MASTER_RETENTION_LOCK, so the retention sweep's snapshot and
+# every (de)registration are linearized against each other: a job registered
+# before a sweep decides can never lose its master mid-preparation, and a
+# sweep that already completed its removal runs strictly before the next
+# registration claim (the fallback to result_video then equals the ordinary
+# missing-master case, not a downgrade during an active preparation).
+_PREP_ACTIVE_MASTER_JOBS: set = set()
+
+
+def _register_prep_master(job_id: str) -> None:
+    """Claim retention protection for the job's master while it is read.
+
+    Blocking so that a concurrently running sweep finishes (its decision
+    window fully closed) before the claim takes effect; call from a worker
+    thread (never the event loop) via ``asyncio.to_thread``.
+    """
+    with _MASTER_RETENTION_LOCK:
+        _PREP_ACTIVE_MASTER_JOBS.add(str(job_id))
+
+
+def _release_prep_master(job_id: str) -> None:
+    """Drop the claim; safe to call twice and on every exit path."""
+    job_id = str(job_id)
+    if _MASTER_RETENTION_LOCK.acquire(blocking=False):
+        try:
+            _PREP_ACTIVE_MASTER_JOBS.discard(job_id)
+        finally:
+            _MASTER_RETENTION_LOCK.release()
+        return
+    # A sweep is running right now and already snapshotted the registry; the
+    # atomic discard is safe in either position and the next sweep re-reads
+    # the registry in sync (under the lock) and applies the policy then.
+    _PREP_ACTIVE_MASTER_JOBS.discard(job_id)
+
 
 def _retention_env_value(name: str, default: float) -> float:
     """Numeric env override for the master retention policy (non-negative)."""
@@ -1389,6 +1424,18 @@ def _retire_masters() -> dict:
                 "size": int(stat.st_size),
                 "mtime": float(stat.st_mtime),
             })
+
+        # TOCTOU guard: a master may be resolved or read by an in-flight
+        # platform preparation right now. The registry is guarded by the same
+        # lock this sweep holds, so the snapshot is synchronized with every
+        # registration; such jobs keep their master this round.
+        active_prep_jobs = set(_PREP_ACTIVE_MASTER_JOBS)
+        deferred = [entry for entry in candidates
+                    if str(entry.get("job_id") or "") in active_prep_jobs]
+        for entry in deferred:
+            candidates.remove(entry)
+            summary["kept"].append(
+                f"{entry['job_id']}/{entry['path'].name} (prep in flight)")
 
         def _remove(entry: dict, reason: str) -> bool:
             label = f"{entry['job_id']}/{entry['path'].name}"
@@ -2082,147 +2129,159 @@ async def process_prepare_publish(job_id: str, targets: list, cover_path: Option
     prep_dir = workdir / _PUBLISH_PREP_DIR
     prep_dir.mkdir(parents=True, exist_ok=True)
 
-    needs: list[dict] = []
-    seen: set = set()
-    for target in targets:
-        purpose = _TARGET_PURPOSE.get(str(target.get("kind") or ""))
-        if not purpose:
-            continue
-        mirrored = bool(target.get("mirrored"))
-        key = _prep_key(purpose, mirrored)
-        if key in seen:
-            continue
-        seen.add(key)
-        needs.append({"kind": "video", "key": key, "purpose": purpose, "mirrored": mirrored})
-    requested_purposes = {item["purpose"] for item in needs}
-    if cover_path:
-        for purpose in _PREP_COVER_PURPOSES:
-            if purpose not in requested_purposes:
+    # In-flight master guard (TOCTOU): from this point the retention sweep
+    # must not unlink the master this preparation resolves/reads, until the
+    # preparation finishes (success, error or cancellation). The claim waits
+    # for a concurrently running sweep (in a thread, off the event loop) so
+    # registration is linearized with the sweep's own decision window.
+    await asyncio.to_thread(_register_prep_master, job_id)
+    try:
+        needs: list[dict] = []
+        seen: set = set()
+        for target in targets:
+            purpose = _TARGET_PURPOSE.get(str(target.get("kind") or ""))
+            if not purpose:
                 continue
-            key = f"cover:{purpose}"
+            mirrored = bool(target.get("mirrored"))
+            key = _prep_key(purpose, mirrored)
             if key in seen:
                 continue
             seen.add(key)
-            needs.append({"kind": "cover", "key": key, "purpose": purpose, "mirrored": False})
+            needs.append({"kind": "video", "key": key, "purpose": purpose, "mirrored": mirrored})
+        requested_purposes = {item["purpose"] for item in needs}
+        if cover_path:
+            for purpose in _PREP_COVER_PURPOSES:
+                if purpose not in requested_purposes:
+                    continue
+                key = f"cover:{purpose}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                needs.append({"kind": "cover", "key": key, "purpose": purpose, "mirrored": False})
 
-    # A mirrored artefact can only be produced from an already-rendered mirror
-    # variant.  Its absence is never a reason to render here (publishing and
-    # preparation never mirror) — drop those needs so the remaining targets are
-    # still prepared; publish reports the missing mirrored targets per target.
-    # Resolution reads the master / mirror files (ffprobe inside
-    # usable_video), so keep it off the event loop.
-    unresolved: list[dict] = []
-    for item in needs:
-        if item["kind"] != "video":
-            continue
-        if await asyncio.to_thread(_prep_source_video, job, item["mirrored"]) is None:
-            unresolved.append(item)
-    if unresolved:
-        needs = [item for item in needs if item not in unresolved]
-
-    if not needs:
-        job["prepare_operation"] = None
-        job["prepare_status"] = "done"
-        _save_montage_job(job_id)
-        return
-
-    stages = []
-    for item in needs:
-        if item["kind"] == "video":
-            label = _PREP_VIDEO_LABELS[item["purpose"]]
-            if item["mirrored"]:
-                label += " (отражённое)"
-            stages.append(Stage(item["key"], label, 3.0))
-        else:
-            stages.append(Stage(item["key"], f"Подготовка обложки для {_PURPOSE_LABELS[item['purpose']]}", 1.0))
-
-    def on_change(tracker: ProgressTracker) -> None:
-        job["prepare_operation"] = tracker.snapshot()
-
-    tracker = ProgressTracker(f"{job_id}:prepare", "publish_prepare", stages,
-                              label="Подготовка к публикации", on_change=on_change)
-    job["prepare_status"] = "running"
-    job["prepare_error"] = None
-    job["prepare_operation"] = tracker.snapshot()
-    _save_montage_job(job_id)
-    await _montage_announce(job_id, "Подготовка файлов к публикации...")
-
-    try:
+        # A mirrored artefact can only be produced from an already-rendered mirror
+        # variant.  Its absence is never a reason to render here (publishing and
+        # preparation never mirror) — drop those needs so the remaining targets are
+        # still prepared; publish reports the missing mirrored targets per target.
+        # Resolution reads the master / mirror files (ffprobe inside
+        # usable_video), so keep it off the event loop.
+        unresolved: list[dict] = []
         for item in needs:
-            if _cancel_requested(job_id):
-                raise montage_engine.MontageCancelled("Отменено пользователем")
-            key = item["key"]
-            tracker.start(key, "Подготовка")
-            if item["kind"] == "video":
-                source = await asyncio.to_thread(_prep_source_video, job, item["mirrored"])
-                if source is None:
-                    tracker.skip(key, "Источник ещё не готов")
-                    continue
-                existing = await asyncio.to_thread(_prepared_video_entry, job, item["purpose"], item["mirrored"])
-                if existing is not None:
-                    tracker.complete(key, "Уже подготовлено")
-                    continue
-                stem = f"{job_id}_{key.replace(':', '_')}"
+            if item["kind"] != "video":
+                continue
+            if await asyncio.to_thread(_prep_source_video, job, item["mirrored"]) is None:
+                unresolved.append(item)
+        if unresolved:
+            needs = [item for item in needs if item not in unresolved]
 
-                def video_progress(percent, detail, _key=key):
-                    tracker.update(_key, percent, detail)
-
-                path = await asyncio.to_thread(
-                    _render_prepared_video, item["purpose"], source, prep_dir, stem,
-                    item["mirrored"], video_progress,
-                    cancel_cb=_montage_cancel_cb(job_id),
-                )
-                info = _validate_prepared_video(path)
-                _publish_prep_entries(job)[key] = {
-                    "path": str(path),
-                    "purpose": item["purpose"],
-                    "kind": "video",
-                    "mirrored": item["mirrored"],
-                    "ready": True,
-                    "signature": _publish_prep_signature(job, key, source),
-                    "size": info["size"],
-                    "duration": info.get("duration"),
-                    "validation": {"ok": True, "detail": f"{info['size']} байт"},
-                    "created_at": time.time(),
-                }
-                tracker.complete(key, f"Готово: {Path(path).name}")
-            else:
-                existing = _prepared_cover_entry(job, item["purpose"], cover_path)
-                if existing is not None:
-                    tracker.complete(key, "Уже подготовлено")
-                    continue
-                output = prep_dir / f"{job_id}_cover_{item['purpose']}.jpg"
-                await asyncio.to_thread(_render_prepared_cover, item["purpose"], cover_path, output)
-                if not output.is_file() or output.stat().st_size == 0:
-                    raise RuntimeError("Не удалось подготовить обложку")
-                _publish_prep_entries(job)[key] = {
-                    "path": str(output),
-                    "purpose": item["purpose"],
-                    "kind": "cover",
-                    "cover_id": cover_id,
-                    "ready": True,
-                    "signature": _publish_prep_signature(job, key, cover_path),
-                    "size": output.stat().st_size,
-                    "created_at": time.time(),
-                }
-                tracker.complete(key, f"Готово: {output.name}")
-        tracker.finish("Файлы для публикации готовы")
-        job["prepare_status"] = "done"
-        _save_montage_job(job_id)
-        await _montage_announce(job_id, "Файлы для публикации готовы")
-    except BaseException as exc:
-        if _cancel_requested(job_id):
-            job["prepare_operation"] = failed_snapshot(tracker.snapshot(), "Отменено пользователем")
-            job["prepare_status"] = "cancelled"
-            job["prepare_error"] = "Отменено пользователем"
+        if not needs:
+            job["prepare_operation"] = None
+            job["prepare_status"] = "done"
             _save_montage_job(job_id)
-            await _montage_announce(job_id, "Подготовка к публикации отменена пользователем")
-            raise montage_engine.MontageCancelled("Отменено пользователем")
-        job["prepare_operation"] = failed_snapshot(tracker.snapshot(), str(exc))
-        job["prepare_status"] = "error"
-        job["prepare_error"] = str(exc)
+            return
+
+        stages = []
+        for item in needs:
+            if item["kind"] == "video":
+                label = _PREP_VIDEO_LABELS[item["purpose"]]
+                if item["mirrored"]:
+                    label += " (отражённое)"
+                stages.append(Stage(item["key"], label, 3.0))
+            else:
+                stages.append(Stage(item["key"], f"Подготовка обложки для {_PURPOSE_LABELS[item['purpose']]}", 1.0))
+
+        def on_change(tracker: ProgressTracker) -> None:
+            job["prepare_operation"] = tracker.snapshot()
+
+        tracker = ProgressTracker(f"{job_id}:prepare", "publish_prepare", stages,
+                                  label="Подготовка к публикации", on_change=on_change)
+        job["prepare_status"] = "running"
+        job["prepare_error"] = None
+        job["prepare_operation"] = tracker.snapshot()
         _save_montage_job(job_id)
-        await _montage_announce(job_id, f"Подготовка к публикации не удалась: {exc}")
+        await _montage_announce(job_id, "Подготовка файлов к публикации...")
+
+        try:
+            for item in needs:
+                if _cancel_requested(job_id):
+                    raise montage_engine.MontageCancelled("Отменено пользователем")
+                key = item["key"]
+                tracker.start(key, "Подготовка")
+                if item["kind"] == "video":
+                    source = await asyncio.to_thread(_prep_source_video, job, item["mirrored"])
+                    if source is None:
+                        tracker.skip(key, "Источник ещё не готов")
+                        continue
+                    existing = await asyncio.to_thread(_prepared_video_entry, job, item["purpose"], item["mirrored"])
+                    if existing is not None:
+                        tracker.complete(key, "Уже подготовлено")
+                        continue
+                    stem = f"{job_id}_{key.replace(':', '_')}"
+
+                    def video_progress(percent, detail, _key=key):
+                        tracker.update(_key, percent, detail)
+
+                    path = await asyncio.to_thread(
+                        _render_prepared_video, item["purpose"], source, prep_dir, stem,
+                        item["mirrored"], video_progress,
+                        cancel_cb=_montage_cancel_cb(job_id),
+                    )
+                    info = _validate_prepared_video(path)
+                    _publish_prep_entries(job)[key] = {
+                        "path": str(path),
+                        "purpose": item["purpose"],
+                        "kind": "video",
+                        "mirrored": item["mirrored"],
+                        "ready": True,
+                        "signature": _publish_prep_signature(job, key, source),
+                        "size": info["size"],
+                        "duration": info.get("duration"),
+                        "validation": {"ok": True, "detail": f"{info['size']} байт"},
+                        "created_at": time.time(),
+                    }
+                    tracker.complete(key, f"Готово: {Path(path).name}")
+                else:
+                    existing = _prepared_cover_entry(job, item["purpose"], cover_path)
+                    if existing is not None:
+                        tracker.complete(key, "Уже подготовлено")
+                        continue
+                    output = prep_dir / f"{job_id}_cover_{item['purpose']}.jpg"
+                    await asyncio.to_thread(_render_prepared_cover, item["purpose"], cover_path, output)
+                    if not output.is_file() or output.stat().st_size == 0:
+                        raise RuntimeError("Не удалось подготовить обложку")
+                    _publish_prep_entries(job)[key] = {
+                        "path": str(output),
+                        "purpose": item["purpose"],
+                        "kind": "cover",
+                        "cover_id": cover_id,
+                        "ready": True,
+                        "signature": _publish_prep_signature(job, key, cover_path),
+                        "size": output.stat().st_size,
+                        "created_at": time.time(),
+                    }
+                    tracker.complete(key, f"Готово: {output.name}")
+            tracker.finish("Файлы для публикации готовы")
+            job["prepare_status"] = "done"
+            _save_montage_job(job_id)
+            await _montage_announce(job_id, "Файлы для публикации готовы")
+        except BaseException as exc:
+            if _cancel_requested(job_id):
+                job["prepare_operation"] = failed_snapshot(tracker.snapshot(), "Отменено пользователем")
+                job["prepare_status"] = "cancelled"
+                job["prepare_error"] = "Отменено пользователем"
+                _save_montage_job(job_id)
+                await _montage_announce(job_id, "Подготовка к публикации отменена пользователем")
+                raise montage_engine.MontageCancelled("Отменено пользователем")
+            job["prepare_operation"] = failed_snapshot(tracker.snapshot(), str(exc))
+            job["prepare_status"] = "error"
+            job["prepare_error"] = str(exc)
+            _save_montage_job(job_id)
+            await _montage_announce(job_id, f"Подготовка к публикации не удалась: {exc}")
+    finally:
+        # Release on every exit path: success, error and cancellation (the
+        # inner handler re-raises MontageCancelled, so the outer finally is
+        # the only guarantee against stale registry claims).
+        _release_prep_master(job_id)
 
 
 def _recover_publish_outcomes(job: dict) -> None:

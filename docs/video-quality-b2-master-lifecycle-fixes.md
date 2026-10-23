@@ -99,3 +99,46 @@ Existing tests updated: `test_montage_cleanup.test_publish_cleanup_releases_mast
 
 Full suite: **213 tests OK** (`unittest`), 3 pre-existing skips. Encode params, FPS,
 HDR, autozoom and content-factory code untouched; no real publications performed.
+
+## 6. TOCTOU guard: in-flight master registry (QA F9 fix)
+
+QA run `2026-10-23T07:29Z` (finding F9) showed: under aggressive retention
+overrides a sweep can unlink a settled master **between** the preparation's
+source resolution and the moment ffmpeg opens it. A plain
+`prepare_status == "running"` check is not sufficient: the source prescan
+(`process_prepare_publish`) runs *before* `prepare_status` is set to
+`"running"`, and sweep/registration were not synchronized.
+
+Fix (app.py):
+
+- `_PREP_ACTIVE_MASTER_JOBS` — job ids whose master is in use by an in-flight
+  platform preparation; **guarded by the same `_MASTER_RETENTION_LOCK` the
+  sweep holds**, so registration and the sweep's removal decisions are
+  linearized (a registration that lands before a sweep's decision protects
+  the job; a finished sweep strictly precedes the next registration claim).
+- `_register_prep_master(job_id)` runs via `asyncio.to_thread` at the very
+  start of `process_prepare_publish` (before the source prescan) and blocks
+  until any concurrently running sweep finishes — the loop is never blocked.
+- `_release_prep_master(job_id)` drops the claim; the whole preparation body
+  now runs inside `try/finally`, so the claim is released on success, error
+  and cancellation (including cancellation between the prescan awaits).
+- `_retire_masters()` snapshots the registry under its lock and every
+  candidate of an in-flight job is kept with the summary note
+  `(prep in flight)` — policy limits (7 days / 2 GiB / 1 GiB free) unchanged.
+- No silent fallback to `result_video` while a preparation is active: the
+  master cannot be deleted after the claim; the ordinary missing-master
+  fallback still applies only when the master was already gone before the
+  preparation claimed it.
+
+Regression tests: `test_montage_master_concurrent_prep.py` (see below).
+
+## 7. Known issues (open observations)
+
+- **F10 — autozoom timeline is not bit-deterministic between identical
+  renders.** Two renders of the same source with the same options produced
+  different zoom timelines (4 vs 6 anchor points, anchor times shifted by
+  ~0.2 s); camera anchor parameters (`eye_screen`, mode) were identical.
+  Cause not proven; working hypothesis: the timeline derives from whisper
+  word-timing jitter across CPU runs. Zoom/autozoom algorithms untouched —
+  observation only, no product changes; re-check if determinism becomes a
+  product requirement.
