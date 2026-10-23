@@ -1151,7 +1151,14 @@ def _safe_montage_workdir(job_id: str) -> Path:
 def _protected_montage_paths(job: dict, workdir: Path) -> set[Path]:
     protected = set()
     result = job.get("result") or {}
-    for key in ("result_video", "preview_video"):
+    keys = ["result_video", "preview_video"]
+    # The master source is kept alive until the job reaches a settled publish
+    # state; once everything is published the storage policy releases it (no
+    # unbounded accumulation of intermediary files).
+    settled = job.get("stage") == "published" and not job.get("publish_errors")
+    if not settled:
+        keys.append("master_video")
+    for key in keys:
         raw = result.get(key)
         if not raw:
             continue
@@ -1291,7 +1298,11 @@ def _cleanup_publish_artifacts(job_id: str, job: dict) -> dict:
             (workdir / "staging", True),
             (workdir / "youtube_staging", True),
             (workdir / f"{job_id}_tg.mp4", False),
+            (workdir / "master.mp4", False),
         ]
+        master = _master_video_path(job)
+        if master is not None and master.parent == workdir:
+            candidates.append((master, False))
         return _cleanup_allowed_paths(job_id, job, "publish", candidates)
     except Exception as exc:
         summary = {"phase": "publish", "removed": [], "protected": [], "errors": [str(exc)]}
@@ -1700,13 +1711,41 @@ def _publish_prep_entries(job: dict) -> dict:
     return entries
 
 
+def _master_video_path(job: dict) -> Optional[Path]:
+    """Path of the recorded master source (a fully effected pre-delivery stream)."""
+    result = job.get("result") or {}
+    name = str(result.get("master_video") or "")
+    job_id = str(result.get("job_id") or "")
+    if not name or not job_id:
+        return None
+    if name == Path(str(result.get("result_video") or "")).name:
+        return None
+    path = MONTAGE_WORK / job_id / name
+    if not path.is_file():
+        return None
+    return path
+
+
 def _prep_source_video(job: dict, mirrored: bool) -> Optional[Path]:
-    """The current source video for a variant (main result or mirrored file)."""
+    """Current source for a variant: the master file or the main result.
+
+    The master carries every finished effect (rotate/mirror, zoom, overlays,
+    subtitles and muted audio) at the highest available quality; platform
+    preparation reads it instead of the delivery encode.  When the master file
+    is missing or unreadable the pipeline falls back to ``result_video`` and
+    logs a warning (API contract stays unchanged).
+    """
     if mirrored:
         if not mirror_variant_ready(job):
             return None
         path = Path(str(_mirror_variant_entry(job).get("path")))
         return path if path.is_file() else None
+    master = _master_video_path(job)
+    if master is not None:
+        if montage_engine.usable_video(master):
+            return master
+        print(f"[montage-prep] {job.get('id')}: master unreadable "
+              f"({master.name}), fallback to result_video", file=sys.stderr)
     result = job.get("result") or {}
     path = result.get("result_video")
     if not path:

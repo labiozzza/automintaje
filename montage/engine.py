@@ -1236,6 +1236,39 @@ def render_montage(
     else:
         _skip("audio_censor", "Заглушение не требуется")
 
+    # ---- Master export source -------------------------------------------
+    # The fully effected stream (rotate/transpose, mirror, zoom, overlays,
+    # subtitles and the optional audio censoring) already exists as
+    # ``final_mp4``; recording it as the master source adds no extra encode
+    # pass.  ``copy`` mode additionally places a byte-exact duplicate into
+    # ``<workdir>/master.mp4`` (gated by a free-disk-space check); ``none``
+    # disables master tracking entirely.
+    master_mode = str(os.environ.get("AUTOMONTAGE_MASTER_MODE") or "inplace").strip().lower()
+    if master_mode not in ("inplace", "copy", "none"):
+        print(f"[master] unknown AUTOMONTAGE_MASTER_MODE \"{master_mode}\", fallback: inplace", file=sys.stderr)
+        master_mode = "inplace"
+    master_video_name = ""
+    if master_mode == "copy":
+        try:
+            needed_bytes = int(Path(final_mp4).stat().st_size) + 64 * 1024 * 1024
+            free_bytes = int(shutil.disk_usage(workdir).free)
+        except Exception:
+            needed_bytes, free_bytes = 0, 0
+        if free_bytes >= needed_bytes:
+            try:
+                master_out = workdir / "master.mp4"
+                shutil.copy2(final_mp4, master_out)
+                master_video_name = master_out.name
+            except Exception as exc:
+                print(f"[master] copy failed, fallback: inplace ({exc})", file=sys.stderr)
+        else:
+            print(f"[master] not enough disk space for copy, fallback: inplace "
+                  f"(free {free_bytes} < needed {needed_bytes})", file=sys.stderr)
+        if not master_video_name:
+            master_mode = "inplace"
+    if master_mode == "inplace":
+        master_video_name = Path(final_mp4).name
+
     delivery_mp4 = workdir / "final.mp4"
     delivery_cmd = [
         shutil.which("ffmpeg") or "ffmpeg", "-y", "-i", str(final_mp4),
@@ -1345,6 +1378,8 @@ def render_montage(
         "bigpickle": use_bigpickle,
         "blur_banned_words": blur_banned_words,
         "blurred_word_intervals": len(muted_intervals),
+        "master_video": master_video_name,
+        "master_mode": master_mode,
         "animations": list(animation_ids()),
         "timeline": timeline_data,
     }

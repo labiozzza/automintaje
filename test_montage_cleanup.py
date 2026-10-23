@@ -396,6 +396,91 @@ class MontageCleanupTests(unittest.TestCase):
         self.assertIn("staging", summary["protected"])
         self.assertTrue(protected.is_file())
 
+    def test_master_path_resolution_and_fallbacks(self):
+        job, workdir = self.make_job(job_id="master01")
+        master_inplace = workdir / "sub_words.mp4"
+        master_inplace.write_bytes(b"master-stream")
+        job["result"]["master_video"] = master_inplace.name
+        job["result"]["master_mode"] = "inplace"
+
+        resolved = app._master_video_path(job)
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved, master_inplace)
+
+        # Missing file falls back to None (callers then use result_video).
+        master_inplace.unlink()
+        self.assertIsNone(app._master_video_path(job))
+
+        # Legacy jobs have no master tracking at all.
+        legacy, legacy_workdir = self.make_job(job_id="master01_legacy")
+        self.assertIsNone(app._master_video_path(legacy))
+
+        # Copy mode duplicates the stream under a dedicated name.
+        master_copy = workdir / "master.mp4"
+        master_copy.write_bytes(b"master-copy")
+        job["result"]["master_video"] = "master.mp4"
+        job["result"]["master_mode"] = "copy"
+        self.assertEqual(app._master_video_path(job), master_copy)
+
+        # A recorded name identical to the delivery result is ignored.
+        job["result"]["master_video"] = Path(job["result"]["result_video"]).name
+        self.assertIsNone(app._master_video_path(job))
+
+    def test_master_source_feeds_platform_preparation(self):
+        job, workdir = self.make_job(job_id="master02")
+        master_inplace = workdir / "censored_audio.mp4"
+        master_inplace.write_bytes(b"master-stream")
+        job["result"]["master_video"] = master_inplace.name
+        job["result"]["master_mode"] = "inplace"
+        with mock.patch.object(app.montage_engine, "usable_video", return_value=True):
+            self.assertEqual(app._prep_source_video(job, False), master_inplace)
+        # Damaged master: fall back to the delivery result.
+        with mock.patch.object(app.montage_engine, "usable_video", return_value=False):
+            self.assertEqual(app._prep_source_video(job, False), Path(job["result"]["result_video"]))
+
+    def test_render_cleanup_keeps_master_until_published(self):
+        job, workdir = self.make_job(job_id="master03", status="processing")
+        for name in ("sub_words.mp4", "zoom.mp4"):
+            (workdir / name).write_bytes(b"stage")
+        job["result"]["master_video"] = "sub_words.mp4"
+        job["result"]["master_mode"] = "inplace"
+        job["result"]["result_video"] = str(workdir / "sub_words.mp4")
+
+        summary = app._cleanup_render_artifacts(job["id"], job)
+
+        self.assertFalse(summary["errors"])
+        self.assertIn("sub_words.mp4", summary["protected"])
+        self.assertTrue((workdir / "sub_words.mp4").is_file())
+
+    def test_publish_cleanup_releases_master_after_publish(self):
+        job, workdir = self.make_job(job_id="master04")
+        master_inplace = workdir / "sub_words.mp4"
+        master_inplace.write_bytes(b"master-stream")
+        job["result"]["master_video"] = master_inplace.name
+        job["result"]["master_mode"] = "inplace"
+        job["stage"] = "published"
+        job["publish_errors"] = None
+
+        summary = app._cleanup_publish_artifacts(job["id"], job)
+
+        self.assertFalse(summary["errors"])
+        self.assertIn(master_inplace.name, summary["removed"])
+        self.assertFalse(master_inplace.exists())
+
+        # With publish errors the master must be kept for a retry.
+        job, workdir = self.make_job(job_id="master05")
+        (workdir / "sub_words.mp4").write_bytes(b"master-stream")
+        job["result"]["master_video"] = "sub_words.mp4"
+        job["result"]["master_mode"] = "inplace"
+        job["stage"] = "published"
+        job["publish_errors"] = {"instagram": "boom"}
+
+        summary = app._cleanup_publish_artifacts(job["id"], job)
+
+        # Cleanup skips the job entirely while publish errors are pending.
+        self.assertEqual(summary, {"phase": "publish", "removed": [], "protected": [], "errors": []})
+        self.assertTrue((workdir / "sub_words.mp4").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()
