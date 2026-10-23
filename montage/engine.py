@@ -668,9 +668,8 @@ def render_montage(
     transcript.write_text(srt_text, encoding="utf-8")
 
     # Diagnostic mode: collect every ffmpeg/worker command for later audit.
-    # Activated by AUTOMONTAGE_DIAGNOSTIC=1 or AUTOMONTAGE_KEEP_INTERMEDIATES=1.
-    _diag = os.environ.get("AUTOMONTAGE_DIAGNOSTIC", "").strip().lower() in ("1", "true", "yes") \
-        or os.environ.get("AUTOMONTAGE_KEEP_INTERMEDIATES", "").strip().lower() in ("1", "true", "yes")
+    # Activated by AUTOMONTAGE_KEEP_INTERMEDIATES=1.
+    _diag = os.environ.get("AUTOMONTAGE_KEEP_INTERMEDIATES", "").strip().lower() in ("1", "true", "yes")
     ffmpeg_commands: list[dict[str, Any]] = []
     def _record_cmd(label: str, cmd: list) -> None:
         if _diag:

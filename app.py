@@ -1243,17 +1243,28 @@ def _cleanup_allowed_paths(job_id: str, job: dict, phase: str, candidates: list[
     return summary
 
 
+def _diagnostic_cleanup_keep(job_id: str, phase: str) -> Optional[dict]:
+    """In diagnostic mode keep intermediates for quality audit.
+
+    Returns the cleanup summary that the caller must return, or ``None``
+    when normal cleanup should proceed.
+    """
+    if os.environ.get("AUTOMONTAGE_KEEP_INTERMEDIATES", "").strip().lower() not in ("1", "true", "yes"):
+        return None
+    try:
+        workdir = _safe_montage_workdir(job_id)
+        _write_cleanup_log(workdir, {"phase": phase, "removed": [], "protected": [],
+                                     "errors": [], "kept": "diagnostic mode"})
+    except Exception:
+        pass
+    return {"phase": phase, "removed": [], "protected": [], "errors": [],
+            "kept": "diagnostic mode (AUTOMONTAGE_KEEP_INTERMEDIATES)"}
+
+
 def _cleanup_render_artifacts(job_id: str, job: dict) -> dict:
-    # Diagnostic mode: keep intermediates for quality audit.
-    if os.environ.get("AUTOMONTAGE_KEEP_INTERMEDIATES", "").strip().lower() in ("1", "true", "yes"):
-        try:
-            workdir = _safe_montage_workdir(job_id)
-            _write_cleanup_log(workdir, {"phase": "render", "removed": [], "protected": [],
-                                         "errors": [], "kept": "diagnostic mode"})
-        except Exception:
-            pass
-        return {"phase": "render", "removed": [], "protected": [], "errors": [],
-                "kept": "diagnostic mode (AUTOMONTAGE_KEEP_INTERMEDIATES)"}
+    kept = _diagnostic_cleanup_keep(job_id, "render")
+    if kept:
+        return kept
     # The unified pipeline keeps ``status`` at ``processing`` while the optional
     # mirror / preparation phases run, so render artefacts are cleaned up as soon
     # as the main result exists (status ``processing`` or ``done``).
@@ -1275,15 +1286,9 @@ def _cleanup_render_artifacts(job_id: str, job: dict) -> dict:
 
 
 def _cleanup_publish_artifacts(job_id: str, job: dict) -> dict:
-    if os.environ.get("AUTOMONTAGE_KEEP_INTERMEDIATES", "").strip().lower() in ("1", "true", "yes"):
-        try:
-            workdir = _safe_montage_workdir(job_id)
-            _write_cleanup_log(workdir, {"phase": "publish", "removed": [], "protected": [],
-                                         "errors": [], "kept": "diagnostic mode"})
-        except Exception:
-            pass
-        return {"phase": "publish", "removed": [], "protected": [], "errors": [],
-                "kept": "diagnostic mode (AUTOMONTAGE_KEEP_INTERMEDIATES)"}
+    kept = _diagnostic_cleanup_keep(job_id, "publish")
+    if kept:
+        return kept
     if job.get("status") != "done" or job.get("stage") != "published" or job.get("publish_errors"):
         return {"phase": "publish", "removed": [], "protected": [], "errors": []}
     try:
@@ -1716,6 +1721,12 @@ def _master_video_path(job: dict) -> Optional[Path]:
     result = job.get("result") or {}
     name = str(result.get("master_video") or "")
     job_id = str(result.get("job_id") or "")
+    if not name or not job_id:
+        return None
+    # Containment: both components come from persisted job state; flatten them
+    # to bare names so a tampered record cannot escape the job workdir.
+    job_id = Path(job_id).name
+    name = Path(name).name
     if not name or not job_id:
         return None
     if name == Path(str(result.get("result_video") or "")).name:

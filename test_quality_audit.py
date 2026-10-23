@@ -1,7 +1,6 @@
 """Tests for the Stage A diagnostic tooling (montage.quality_audit)."""
 
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,7 +21,7 @@ class QualityAuditProbeTests(unittest.TestCase):
         self.assertIn("format", probe)
 
     def test_probe_missing_file_raises(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(RuntimeError):
             probe_video(Path("/nonexistent/video.mp4"))
 
     def test_build_report_structure(self):

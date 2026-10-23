@@ -958,7 +958,7 @@ def main() -> None:
 
     crf = cfg_int(render_cfg, "encoding.crf", args.crf)
     preset = cfg_str(render_cfg, "encoding.preset", args.preset) or args.preset
-    pix_fmt = str(os.environ.get("AUTOMONTAGE_INTERMEDIATE_PIX_FMT") or "" and os.environ["AUTOMONTAGE_INTERMEDIATE_PIX_FMT"] or cfg_str(render_cfg, "encoding.pix_fmt", None) or "yuv420p")
+    pix_fmt = str(os.environ.get("AUTOMONTAGE_INTERMEDIATE_PIX_FMT") or cfg_str(render_cfg, "encoding.pix_fmt", None) or "yuv420p")
     color_args = sdr_color_args(video_path)
 
     cap = cv2.VideoCapture(str(video_path))

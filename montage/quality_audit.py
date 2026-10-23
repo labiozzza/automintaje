@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -132,28 +133,33 @@ def compute_metric(reference: Path, distorted: Path, metric: str,
     return parsed
 
 
+def _parse_average_summary(text: str) -> Dict[str, Any]:
+    """Parse the last ``average:`` summary line into ``{"average": float}``."""
+    for line in reversed(text.splitlines()):
+        if "average:" in line.lower():
+            match = re.search(r"average:\s*([0-9.inf]+)", line, re.IGNORECASE)
+            if match:
+                val = match.group(1)
+                return {"average": float("inf") if val.lower() == "inf" else float(val)}
+    return {}
+
+
 def _parse_metric_output(metric: str, text: str) -> Dict[str, Any]:
     m = metric.lower()
     out: Dict[str, Any] = {}
     # PSNR: "PSNR y:.. u:.. v:.. average:.. min:.. max:.."
     if m == "psnr":
+        out.update(_parse_average_summary(text))
         for line in reversed(text.splitlines()):
             if "average:" in line.lower():
-                # find average value
-                import re
-                match = re.search(r"average:\s*([0-9.inf]+)", line, re.IGNORECASE)
-                if match:
-                    val = match.group(1)
-                    out["average"] = float("inf") if val.lower() == "inf" else float(val)
-                ymin = re.search(r"y:\s*([0-9.]+)", line, re.IGNORECASE)
-                if ymin:
-                    out["y"] = float(ymin.group(1))
+                ym = re.search(r"y:\s*([0-9.]+)", line, re.IGNORECASE)
+                if ym:
+                    out["y"] = float(ym.group(1))
                 break
         return out
     if m == "ssim":
         for line in reversed(text.splitlines()):
             if "All:" in line:
-                import re
                 match = re.search(r"All:\s*([0-9.]+)", line)
                 if match:
                     out["all"] = float(match.group(1))
@@ -165,7 +171,6 @@ def _parse_metric_output(metric: str, text: str) -> Dict[str, Any]:
     if m == "vmaf":
         for line in reversed(text.splitlines()):
             if "VMAF score:" in line or "vmaf" in line.lower():
-                import re
                 match = re.search(r"VMAF score:\s*([0-9.]+)", line, re.IGNORECASE)
                 if match:
                     out["score"] = float(match.group(1))
@@ -176,7 +181,6 @@ def _parse_metric_output(metric: str, text: str) -> Dict[str, Any]:
                     break
         # fallback: parse last number
         if "score" not in out:
-            import re
             nums = re.findall(r"([0-9]+\.[0-9]+)", text)
             if nums:
                 out["score"] = float(nums[-1])
@@ -184,11 +188,8 @@ def _parse_metric_output(metric: str, text: str) -> Dict[str, Any]:
     if m == "xpsnr":
         for line in reversed(text.splitlines()):
             if "average:" in line.lower() or "xpsnr" in line.lower():
-                import re
-                match = re.search(r"average:\s*([0-9.inf]+)", line, re.IGNORECASE)
-                if match:
-                    val = match.group(1)
-                    out["average"] = float("inf") if val.lower() == "inf" else float(val)
+                out.update(_parse_average_summary(line))
+                if "average" in out:
                     break
         return out
     return out
