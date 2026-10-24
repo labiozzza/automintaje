@@ -17,6 +17,14 @@ from types import ModuleType
 from typing import Any, Callable
 
 from .audio_censor import build_volume_filter, find_mute_intervals, needs_word_alignment
+from .color_pipeline import (
+    bt709_sdr_profile,
+    encoder_color_args,
+    hdr_to_bt709_filter,
+    probe_color_profile,
+    sdr_to_bt709_filter,
+    yuv_preserving_filter,
+)
 from .progress_tracker import PENDING, ProgressTracker, montage_plan
 from .secrets_env import load_secrets_env, get_software_defaults, media_repo_dir
 
@@ -726,42 +734,8 @@ def render_montage(
         _inter_pix_fmt = "yuv420p"
 
     def _sdr_color_args(video: Path) -> list[str]:
-        # Copy color metadata only for SDR (bt709) sources. HDR/BT.2020/PQ/HLG
-        # tags are not copied onto 8-bit SDR output without tone mapping.
         try:
-            import subprocess as _sp
-            out = _sp.check_output(
-                [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", "v:0",
-                 "-show_entries", "stream=color_primaries,color_transfer,color_space,color_range",
-                 "-of", "json", str(video)],
-                text=True, encoding="utf-8", errors="replace", timeout=30,
-            )
-            streams = json.loads(out or "{}").get("streams") or []
-            if not streams:
-                return []
-            st = streams[0]
-            cp = (st.get("color_primaries") or "").lower()
-            ct = (st.get("color_transfer") or "").lower()
-            cs = (st.get("color_space") or "").lower()
-            cr = (st.get("color_range") or "").lower()
-            if not (cp in ("", "bt709") and ct in ("", "bt709") and cs in ("", "bt709")
-                    and cr in ("", "tv", "mpeg")):
-                return []
-            args_l: list[str] = []
-            if cp:
-                args_l += ["-color_primaries", cp]
-            if ct:
-                args_l += ["-color_trc", ct]
-            if cs:
-                args_l += ["-colorspace", cs]
-            if cr:
-                args_l += ["-color_range", cr]
-            # Output color options of this ffmpeg build drop primaries/trc for
-            # x264; VUI params are the reliable channel.  Append them when the
-            # source is fully tagged BT.709 SDR (mirrors the args above).
-            if {cp or "bt709", ct or "bt709", cs or "bt709"} <= {"bt709"}:
-                args_l += ["-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709"]
-            return args_l
+            return encoder_color_args(probe_color_profile(video), "h264")
         except Exception:
             return []
 
@@ -771,7 +745,9 @@ def render_montage(
     source_video = Path(source_video)
     _rover: dict[str, Any] = {}
     _duration = 0.0
+    _color_profile: dict[str, Any] = {}
     try:
+        _color_profile = probe_color_profile(source_video)
         _probe = json.loads(subprocess.check_output(
             [shutil.which("ffprobe") or "ffprobe", "-v", "error",
              "-show_streams", "-show_format", "-of", "json", str(source_video)],
@@ -874,7 +850,7 @@ def render_montage(
 
     # HDR sources cannot feed the 8-bit OpenCV pipeline directly: tone-map to
     # SDR BT.709 first so the creative stages operate on correct 8-bit frames.
-    if str(_rover.get("transfer") or "").lower() in ("smpte2084", "arib-std-b67") and Path(source_video).exists():
+    if _color_profile.get("hdr") and Path(source_video).exists():
         _tonemap_ok = False
         try:
             _flist = subprocess.check_output(
@@ -885,17 +861,13 @@ def render_montage(
         except Exception:
             _tonemap_ok = False
         if _tonemap_ok:
-            _hdr_in = str(_rover.get("transfer")).lower()
             _sdr_source = workdir / "sdr_source.mp4"
             _hdr_cmd = [
                 shutil.which("ffmpeg") or "ffmpeg", "-y", "-noautorotate", "-display_rotation:v:0", "0",
                 "-i", str(source_video), "-map", "0:v:0", "-map", "0:a:0?",
-                "-vf", (
-                    f"zscale=t={_hdr_in}:m=2020_ncl,format=gbrpf32le,zscale=t=linear,"
-                    "tonemap=mobius:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p"
-                ),
+                "-vf", hdr_to_bt709_filter(_color_profile),
                 "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p",
-                "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709", "-color_range", "tv",
+            ] + encoder_color_args(bt709_sdr_profile(), "h264") + [
                 "-c:a", "copy", "-movflags", "+faststart", str(_sdr_source),
             ]
             _record_cmd("sdr_normalize", _hdr_cmd)
@@ -905,6 +877,7 @@ def render_montage(
                                         timeout=1800, job_id=job_id, cancel_cb=cancel_cb)
             if _code == 0 and _sdr_source.exists():
                 source_video = _sdr_source
+                _color_profile = bt709_sdr_profile()
                 _rover = {"rotate": int(_rover.get("rotate") or 0), "w": int(_rover.get("w") or 0),
                           "h": int(_rover.get("h") or 0), "transfer": "", "primaries": "", "space": ""}
                 _done("prepare", "Исходник преобразован в SDR (BT.709 tone mapping)")
@@ -926,7 +899,8 @@ def render_montage(
             _slot = f"{_vh}x{_vw}"
             _cmd = [
                 shutil.which("ffmpeg") or "ffmpeg", "-y", "-noautorotate", "-display_rotation:v:0", "0", "-i", str(source_video),
-                "-map", "0:v:0", "-map", "0:a:0?", "-vf", f"transpose={1 if _src_rot == 270 else 2},scale={_slot}:flags=lanczos",
+                "-map", "0:v:0", "-map", "0:a:0?", "-vf",
+                f"transpose={1 if _src_rot == 270 else 2},scale={_slot}:flags=lanczos,{yuv_preserving_filter(_color_profile)}",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "0", "-pix_fmt", _inter_pix_fmt,
             ] + _sdr_color_args(source_video) + [
                 "-c:a", "copy",
@@ -955,7 +929,7 @@ def render_montage(
         mirrored_source = workdir / "mirrored_source.mp4"
         mirror_cmd = [
             shutil.which("ffmpeg") or "ffmpeg", "-y", "-i", str(source_video),
-            "-map", "0:v:0", "-map", "0:a:0?", "-vf", "hflip",
+            "-map", "0:v:0", "-map", "0:a:0?", "-vf", f"hflip,{yuv_preserving_filter(_color_profile)}",
             "-c:v", "libx264", "-preset", "fast", "-crf", "0", "-pix_fmt", _inter_pix_fmt,
         ] + _sdr_color_args(source_video) + [
             "-c:a", "copy", "-metadata:s:v:0", "rotate=0", "-movflags", "+faststart",
@@ -1345,18 +1319,25 @@ def render_montage(
         final_mp4, workdir)
 
     delivery_mp4 = workdir / "final.mp4"
+    _delivery_color = probe_color_profile(final_mp4)
+    if _delivery_color.get("hdr"):
+        raise RuntimeError("HDR metadata reached SDR finalization without tone mapping")
     delivery_cmd = [
         shutil.which("ffmpeg") or "ffmpeg", "-y", "-i", str(final_mp4),
         "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx265", "-tag:v", "hvc1",
         "-preset", "medium", "-crf", "14",
-        "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(delivery_mp4),
+        "-pix_fmt", "yuv420p",
+    ] + encoder_color_args(_delivery_color, "hevc") + [
+        "-c:a", "copy", "-movflags", "+faststart", str(delivery_mp4),
     ]
     preview_mp4 = workdir / "preview.mp4"
     preview_cmd = [
         shutil.which("ffmpeg") or "ffmpeg", "-y", "-i", str(final_mp4),
         "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264",
         "-profile:v", "high", "-level:v", "4.1", "-preset", "medium", "-crf", "12",
-        "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(preview_mp4),
+        "-pix_fmt", "yuv420p",
+    ] + encoder_color_args(_delivery_color, "h264") + [
+        "-c:a", "copy", "-movflags", "+faststart", str(preview_mp4),
     ]
     _record_cmd("finalize_hevc", delivery_cmd)
     _record_cmd("preview_h264", preview_cmd)
@@ -1499,17 +1480,24 @@ def _transcode_to_fit(source: Path, output: Path, target_bytes: int, duration: f
                       job_id: str | None = None,
                       cancel_cb: Callable[[], bool] | None = None) -> None:
     ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+    color_profile = probe_color_profile(source)
+    if color_profile.get("hdr"):
+        raise RuntimeError("HDR video must be tone-mapped before Telegram size preparation")
+    color_filter = sdr_to_bt709_filter(color_profile)
+    output_profile = (bt709_sdr_profile("pc" if color_profile.get("range") in {"pc", "jpeg"} else "tv")
+                     if color_filter else color_profile)
     audio_bitrate = 160_000
     vbr = max(400_000, int(target_bytes * 8 * 0.96 / max(0.1, duration)) - audio_bitrate)
     for attempt in range(2):
         output.unlink(missing_ok=True)
         bitrate = max(400_000, int(vbr * (0.88 ** attempt)))
         cmd = [ffmpeg, "-y", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?",
+               *(["-vf", color_filter] if color_filter else []),
                "-c:v", "libx264", "-preset", "medium", "-b:v", str(bitrate),
                "-maxrate", str(int(bitrate * 1.08)), "-bufsize", str(int(bitrate * 2.16)),
                "-pix_fmt", "yuv420p",
-               "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709",
-               "-color_range", "tv", "-c:a", "aac", "-b:a", "160k",
+               *encoder_color_args(output_profile, "h264"),
+               "-c:a", "aac", "-b:a", "160k",
                "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", str(output)]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                 text=True, encoding="utf-8", errors="replace")

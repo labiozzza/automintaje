@@ -13,6 +13,14 @@ from typing import Any, Callable
 
 from PIL import Image
 
+from .color_pipeline import (
+    bt709_sdr_profile,
+    encoder_color_args,
+    is_bt709_sdr,
+    probe_color_profile,
+    sdr_to_bt709_filter,
+)
+
 
 GITHUB_LIMIT_BYTES = 100 * 1024 * 1024
 GITHUB_TARGET_BYTES = 88 * 1024 * 1024
@@ -137,6 +145,7 @@ class InstagramPublisher:
             "audio": audio or {},
             "format_name": str(fmt.get("format_name") or ""),
             "duration": duration,
+            "color_profile": probe_color_profile(source),
         }
 
     def _ig_fps(self, source: Path, profile: dict[str, Any] | None = None) -> str:
@@ -207,9 +216,10 @@ class InstagramPublisher:
         duration = float(profile.get("duration") or 0)
         if not 3 <= duration <= 15 * 60:
             return False
-        transfer = str(video.get("color_transfer") or "").lower()
-        primaries = str(video.get("color_primaries") or "").lower()
-        if transfer in {"smpte2084", "arib-std-b67"} or primaries == "bt2020":
+        color = profile.get("color_profile") or {}
+        if color.get("hdr"):
+            return False
+        if all(color.get(key) for key in ("primaries", "transfer", "matrix", "range")) and not is_bt709_sdr(color):
             return False
         if audio:
             if str(audio.get("codec_name") or "").lower() != "aac":
@@ -227,10 +237,7 @@ class InstagramPublisher:
         command = [
             self.ffmpeg, "-y", "-i", str(source),
             "-map", "0:v:0", "-map", "0:a:0?",
-            "-c", "copy", "-bsf:v",
-            ("h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0"
-             if str(self._stream_profile(source)["video"].get("codec_name") or "").lower() == "h264"
-             else "hevc_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0"),
+            "-c", "copy",
             "-movflags", "+faststart",
             "-progress", "pipe:1", "-nostats", str(output),
         ]
@@ -255,6 +262,12 @@ class InstagramPublisher:
         progress: Callable[[float, str], None],
     ) -> None:
         duration = self._duration(source)
+        color_profile = probe_color_profile(source)
+        if color_profile.get("hdr"):
+            raise RuntimeError("HDR video must be tone-mapped before Instagram preparation")
+        color_filter = sdr_to_bt709_filter(color_profile)
+        output_profile = (bt709_sdr_profile("pc" if color_profile.get("range") in {"pc", "jpeg"} else "tv")
+                          if color_filter else color_profile)
         fps = self._ig_fps(source)
         audio_bitrate = 160_000
         target_video_bitrate = max(500_000, int(GITHUB_TARGET_BYTES * 8 * 0.96 / duration) - audio_bitrate)
@@ -275,7 +288,7 @@ class InstagramPublisher:
                 "-map",
                 "0:a:0?",
                 "-vf",
-                f"setpts=PTS-STARTPTS,fps={fps}",
+                f"{color_filter + ',' if color_filter else ''}setpts=PTS-STARTPTS,fps={fps}",
                 "-af",
                 "aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS",
                 "-c:v",
@@ -292,8 +305,7 @@ class InstagramPublisher:
                 str(maxrate * 2),
                 "-pix_fmt",
                 "yuv420p",
-                "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709",
-                "-color_range", "tv",
+                *encoder_color_args(output_profile, "h264"),
                 "-c:a",
                 "aac",
                 "-b:a",
@@ -334,6 +346,7 @@ class InstagramPublisher:
                     if percent != last_percent:
                         last_percent = percent
                         progress(percent, f"Подготовка файла: {percent}%")
+                process.stdout.close()
                 code = process.wait()
             if code != 0 or not output.exists():
                 raise RuntimeError(f"publication ffmpeg failed with code {code}")
@@ -350,17 +363,23 @@ class InstagramPublisher:
         progress: Callable[[float, str], None],
     ) -> None:
         duration = self._duration(source)
+        color_profile = probe_color_profile(source)
+        if color_profile.get("hdr"):
+            raise RuntimeError("HDR video must be tone-mapped before Instagram preparation")
+        color_filter = sdr_to_bt709_filter(color_profile)
+        output_profile = (bt709_sdr_profile("pc" if color_profile.get("range") in {"pc", "jpeg"} else "tv")
+                          if color_filter else color_profile)
         fps = self._ig_fps(source)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.unlink(missing_ok=True)
         command = [
             self.ffmpeg, "-y", "-fflags", "+genpts", "-i", str(source),
             "-map", "0:v:0", "-map", "0:a:0?",
-            "-vf", f"setpts=PTS-STARTPTS,fps={fps}",
+            "-vf", f"{color_filter + ',' if color_filter else ''}setpts=PTS-STARTPTS,fps={fps}",
             "-af", "aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS",
             "-c:v", "libx264", "-profile:v", "high", "-level:v", "4.2",
             "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-            "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709", "-color_range", "tv",
+            *encoder_color_args(output_profile, "h264"),
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
             "-fps_mode", "cfr", "-shortest", "-movflags", "+faststart",
             "-progress", "pipe:1", "-nostats", str(output),
@@ -384,6 +403,7 @@ class InstagramPublisher:
                 if percent != last_percent:
                     last_percent = percent
                     progress(percent, f"Синхронизация видео и звука: {percent}%")
+            process.stdout.close()
             code = process.wait()
         if code != 0 or not output.exists():
             raise RuntimeError("publication A/V normalization failed")

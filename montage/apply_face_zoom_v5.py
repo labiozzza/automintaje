@@ -32,10 +32,18 @@ import numpy as np
 
 try:
     from .camera_trajectory import CameraSettings, compute_camera_track, settings_from_dict
+    from .color_pipeline import (
+        RawBGRReader, encoder_color_args, probe_color_profile, raw_bgr_output_profile,
+        raw_bgr_to_yuv_filter,
+    )
 except ImportError:  # run as a script: `python montage/apply_face_zoom_v5.py`
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from montage.camera_trajectory import (  # noqa: E402
         CameraSettings, compute_camera_track, settings_from_dict,
+    )
+    from montage.color_pipeline import (  # noqa: E402
+        RawBGRReader, encoder_color_args, probe_color_profile, raw_bgr_output_profile,
+        raw_bgr_to_yuv_filter,
     )
 
 
@@ -56,45 +64,8 @@ def clamp(value: float, low: float, high: float) -> float:
 
 
 def sdr_color_args(video_path: Path) -> list[str]:
-    """Return color metadata args only for SDR (bt709) sources.
-
-    HDR/BT.2020/PQ/HLG metadata is NOT copied onto an 8-bit SDR output
-    without a proper tone mapping (Stage C).  For non-SDR sources we return
-    an empty list so ffmpeg keeps its default (no misleading HDR tags).
-    """
-    try:
-        import subprocess as _sp, json as _json, shutil as _sh
-        out = _sp.check_output(
-            [_sh.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=color_primaries,color_transfer,color_space,color_range",
-             "-of", "json", str(video_path)],
-            text=True, encoding="utf-8", errors="replace", timeout=30,
-        )
-        data = _json.loads(out or "{}")
-        streams = data.get("streams") or []
-        if not streams:
-            return []
-        st = streams[0]
-        cp = (st.get("color_primaries") or "").lower()
-        ct = (st.get("color_transfer") or "").lower()
-        cs = (st.get("color_space") or "").lower()
-        cr = (st.get("color_range") or "").lower()
-        sdr = (cp in ("", "bt709") and ct in ("", "bt709") and cs in ("", "bt709")
-               and cr in ("", "tv", "mpeg"))
-        if not sdr:
-            return []
-        args = []
-        if cp:
-            args += ["-color_primaries", cp]
-        if ct:
-            args += ["-color_trc", ct]
-        if cs:
-            args += ["-colorspace", cs]
-        if cr:
-            args += ["-color_range", cr]
-        return args
-    except Exception:
-        return []
+    """Return only probed color labels; absent source tags remain absent."""
+    return encoder_color_args(raw_bgr_output_profile(probe_color_profile(video_path)), "h264")
 
 
 def fail(message: str, code: int = 1) -> None:
@@ -673,12 +644,15 @@ def transform_frame(
 
 
 def start_ffmpeg(output: Path, video_path: Path, width: int, height: int, fps: float, crf: int, preset: str,
-                pix_fmt: str = "yuv420p", color_args: list[str] | None = None) -> subprocess.Popen:
+                 pix_fmt: str = "yuv420p", color_args: list[str] | None = None) -> subprocess.Popen:
     if shutil.which("ffmpeg") is None:
         fail("ffmpeg not found in PATH")
 
     output.parent.mkdir(parents=True, exist_ok=True)
 
+    profile = probe_color_profile(video_path)
+    if profile.get("hdr"):
+        fail("HDR input must be tone-mapped before the OpenCV zoom stage")
     cmd = [
         "ffmpeg",
         "-y",
@@ -698,6 +672,8 @@ def start_ffmpeg(output: Path, video_path: Path, width: int, height: int, fps: f
         "0:v:0",
         "-map",
         "1:a:0?",
+        "-vf",
+        raw_bgr_to_yuv_filter(profile),
         "-c:v",
         "libx264",
         "-preset",
@@ -706,7 +682,7 @@ def start_ffmpeg(output: Path, video_path: Path, width: int, height: int, fps: f
         str(crf),
         "-pix_fmt",
         pix_fmt,
-    ] + (color_args or []) + [
+    ] + (color_args if color_args is not None else encoder_color_args(raw_bgr_output_profile(profile), "h264")) + [
         "-c:a",
         "copy",
         "-movflags",
@@ -959,7 +935,10 @@ def main() -> None:
     crf = cfg_int(render_cfg, "encoding.crf", args.crf)
     preset = cfg_str(render_cfg, "encoding.preset", args.preset) or args.preset
     pix_fmt = str(os.environ.get("AUTOMONTAGE_INTERMEDIATE_PIX_FMT") or cfg_str(render_cfg, "encoding.pix_fmt", None) or "yuv420p")
-    color_args = sdr_color_args(video_path)
+    color_profile = probe_color_profile(video_path)
+    if color_profile.get("hdr"):
+        fail("HDR input must be tone-mapped before the OpenCV zoom stage")
+    color_args = encoder_color_args(raw_bgr_output_profile(color_profile), "h264")
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -976,6 +955,9 @@ def main() -> None:
         total_frames = min(total_frames, args.limit_frames) if total_frames else args.limit_frames
     if total_frames <= 0:
         fail("cannot detect frame count")
+
+    cap.release()
+    reader = RawBGRReader(video_path, width, height, color_profile)
 
     xs, ys, zs = build_interpolated_series(
         data=data,
@@ -1024,7 +1006,7 @@ def main() -> None:
     frame_index = 0
     try:
         while frame_index < total_frames:
-            ok, frame = cap.read()
+            ok, frame = reader.read()
             if not ok:
                 break
 
@@ -1048,6 +1030,7 @@ def main() -> None:
         fail("ffmpeg pipe closed unexpectedly")
     finally:
         cap.release()
+        reader.close()
         try:
             ffmpeg.stdin.close()
         except Exception:

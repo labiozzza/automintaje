@@ -1008,6 +1008,7 @@ MONTAGE_WORK.mkdir(exist_ok=True)
 from montage.secrets_env import load_secrets_env
 load_secrets_env()
 from montage import engine as montage_engine
+from montage.color_pipeline import probe_color_profile
 from montage import cover_generator
 from montage.progress_tracker import failed_snapshot, ProgressTracker, Stage
 
@@ -1911,7 +1912,12 @@ def _platform_copy_probe(path) -> dict:
     video = next((s for s in streams if str(s.get("codec_type")) == "video"), {}) or {}
     audio = next((s for s in streams if str(s.get("codec_type")) == "audio"), {}) or {}
     fmt = data.get("format") or {}
-    return {"video": video, "audio": audio, "format_name": str(fmt.get("format_name") or "")}
+    return {
+        "video": video,
+        "audio": audio,
+        "format_name": str(fmt.get("format_name") or ""),
+        "color_profile": probe_color_profile(path),
+    }
 
 
 def _mp4_copy_ready(probe: dict) -> bool:
@@ -1951,9 +1957,7 @@ def _mp4_copy_ready(probe: dict) -> bool:
         return False
     if not 0 < fps <= 60:
         return False
-    transfer = str(video.get("color_transfer") or "").lower()
-    primaries = str(video.get("color_primaries") or "").lower()
-    if transfer in {"smpte2084", "arib-std-b67"} or primaries == "bt2020":
+    if (probe.get("color_profile") or {}).get("hdr"):
         return False
     audio = probe.get("audio") or {}
     if audio and str(audio.get("codec_name") or "").lower() != "aac":
@@ -1961,7 +1965,7 @@ def _mp4_copy_ready(probe: dict) -> bool:
     return True
 
 
-PREP_EXPORT_PROFILE = "b3-2"
+PREP_EXPORT_PROFILE = "b3-3-color-preserving"
 
 
 def _publish_prep_signature(job: dict, key: str, source_path) -> str:
@@ -2096,10 +2100,7 @@ def _render_prepared_video(purpose: str, source, target_dir, stem: str,
                 command = [
                     ffmpeg, "-y", "-i", str(source),
                     "-map", "0:v:0", "-map", "0:a:0?",
-                    "-c", "copy", "-bsf:v",
-                    ("h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0"
-                     if str(_platform_copy_probe(source)["video"].get("codec_name") or "").lower() == "h264"
-                     else "hevc_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0"),
+                    "-c", "copy",
                     "-movflags", "+faststart", str(output),
                 ]
                 process = subprocess.Popen(command, stdout=subprocess.DEVNULL,

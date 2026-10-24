@@ -19,6 +19,14 @@ from typing import Any, Callable
 
 from PIL import Image, ImageOps
 
+from .color_pipeline import (
+    bt709_sdr_profile,
+    encoder_color_args,
+    is_bt709_sdr,
+    probe_color_profile,
+    sdr_to_bt709_filter,
+)
+
 try:
     import certifi
 except Exception:  # pragma: no cover - env without certifi
@@ -175,6 +183,7 @@ class YouTubePublisher:
             "audio": audio or {},
             "format_name": str(fmt.get("format_name") or ""),
             "duration": duration,
+            "color_profile": probe_color_profile(video_path),
         }
 
     def _copy_ready_for_youtube(self, profile: dict[str, Any]) -> bool:
@@ -222,9 +231,10 @@ class YouTubePublisher:
             # YouTube accepts 44.1k/48k AAC natively (it re-processes audio server-side).
             if sample_rate and sample_rate not in {"44100", "48000"}:
                 return False
-        transfer = str(video.get("color_transfer") or "").lower()
-        primaries = str(video.get("color_primaries") or "").lower()
-        if transfer in {"smpte2084", "arib-std-b67"} or primaries == "bt2020":
+        color = profile.get("color_profile") or {}
+        if color.get("hdr"):
+            return False
+        if all(color.get(key) for key in ("primaries", "transfer", "matrix", "range")) and not is_bt709_sdr(color):
             return False
         return True
 
@@ -235,10 +245,7 @@ class YouTubePublisher:
         command = [
             ffmpeg, "-y", "-i", str(source),
             "-map", "0:v:0", "-map", "0:a:0?",
-            "-c", "copy", "-bsf:v",
-            ("h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0"
-             if str(self._stream_profile(source)["video"].get("codec_name") or "").lower() == "h264"
-             else "hevc_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0"),
+            "-c", "copy",
             "-movflags", "+faststart", str(output),
         ]
         result = subprocess.run(command, capture_output=True, text=True,
@@ -277,6 +284,12 @@ class YouTubePublisher:
         profile = self._stream_profile(source)
         if self._copy_ready_for_youtube(profile):
             return self._remux_copy(source, output, progress)
+        color_profile = profile.get("color_profile") or probe_color_profile(source)
+        if color_profile.get("hdr"):
+            raise RuntimeError("HDR video must be tone-mapped before YouTube preparation")
+        color_filter = sdr_to_bt709_filter(color_profile)
+        output_profile = (bt709_sdr_profile("pc" if color_profile.get("range") in {"pc", "jpeg"} else "tv")
+                          if color_filter else color_profile)
         duration = max(0.001, self._duration(source))
         fps = self._frame_rate(source)
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -285,11 +298,11 @@ class YouTubePublisher:
         command = [
             ffmpeg, "-y", "-fflags", "+genpts", "-i", str(source),
             "-map", "0:v:0", "-map", "0:a:0?",
-            "-vf", f"setpts=PTS-STARTPTS,fps={fps}",
+            "-vf", f"{color_filter + ',' if color_filter else ''}setpts=PTS-STARTPTS,fps={fps}",
             "-af", "aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS",
             "-c:v", "libx264", "-profile:v", "high",
             "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p",
-            "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709", "-color_range", "tv",
+            *encoder_color_args(output_profile, "h264"),
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
             "-fps_mode", "cfr", "-shortest",
             "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", str(output),
@@ -309,6 +322,7 @@ class YouTubePublisher:
                 except ValueError:
                     continue
                 progress(percent, f"Подготовка YouTube CFR: {percent:.0f}%")
+            process.stdout.close()
             code = process.wait()
         if code != 0 or not output.exists():
             raise RuntimeError("Не удалось подготовить синхронизированную YouTube-версию")

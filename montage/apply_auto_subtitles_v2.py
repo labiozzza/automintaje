@@ -23,6 +23,17 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+try:
+    from .color_pipeline import (
+        RawBGRReader, encoder_color_args, probe_color_profile, raw_bgr_output_profile,
+        raw_bgr_to_yuv_filter,
+    )
+except ImportError:
+    from color_pipeline import (
+        RawBGRReader, encoder_color_args, probe_color_profile, raw_bgr_output_profile,
+        raw_bgr_to_yuv_filter,
+    )
+
 
 def fail(message: str) -> None:
     print(f"ERROR: {message}", file=sys.stderr)
@@ -180,37 +191,8 @@ def wrap_tokens(
 
 
 def sdr_color_args(video_path: Path) -> list[str]:
-    """Color metadata args only for SDR (bt709) sources; HDR tags are not copied."""
-    try:
-        out = subprocess.check_output(
-            [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=color_primaries,color_transfer,color_space,color_range",
-             "-of", "json", str(video_path)],
-            text=True, encoding="utf-8", errors="replace", timeout=30,
-        )
-        streams = (json.loads(out or "{}").get("streams") or [])
-        if not streams:
-            return []
-        st = streams[0]
-        cp = (st.get("color_primaries") or "").lower()
-        ct = (st.get("color_transfer") or "").lower()
-        cs = (st.get("color_space") or "").lower()
-        cr = (st.get("color_range") or "").lower()
-        if not (cp in ("", "bt709") and ct in ("", "bt709") and cs in ("", "bt709")
-                and cr in ("", "tv", "mpeg")):
-            return []
-        args: list[str] = []
-        if cp:
-            args += ["-color_primaries", cp]
-        if ct:
-            args += ["-color_trc", ct]
-        if cs:
-            args += ["-colorspace", cs]
-        if cr:
-            args += ["-color_range", cr]
-        return args
-    except Exception:
-        return []
+    """Return only probed color labels; never invent tags for unknown sources."""
+    return encoder_color_args(raw_bgr_output_profile(probe_color_profile(video_path)), "h264")
 
 
 def start_ffmpeg(
@@ -229,6 +211,10 @@ def start_ffmpeg(
 
     output.parent.mkdir(parents=True, exist_ok=True)
 
+    profile = probe_color_profile(video_path)
+    if profile.get("hdr"):
+        fail("HDR input must be tone-mapped before the subtitle OpenCV stage")
+
     cmd = [
         "ffmpeg", "-y",
         "-f", "rawvideo",
@@ -239,11 +225,12 @@ def start_ffmpeg(
         "-i", str(video_path),
         "-map", "0:v:0",
         "-map", "1:a:0?",
+        "-vf", raw_bgr_to_yuv_filter(profile),
         "-c:v", "libx264",
         "-preset", preset,
         "-crf", str(crf),
         "-pix_fmt", pix_fmt,
-    ] + (color_args or []) + [
+    ] + (color_args if color_args is not None else encoder_color_args(raw_bgr_output_profile(profile), "h264")) + [
         "-c:a", "copy",
         "-movflags", "+faststart",
         str(output),
@@ -453,12 +440,16 @@ def main() -> None:
         fail("Cannot detect video width/height/fps")
     if args.limit_frames > 0:
         total_frames = min(total_frames, args.limit_frames) if total_frames else args.limit_frames
+    color_profile = probe_color_profile(video_path)
+    if color_profile.get("hdr"):
+        fail("HDR input must be tone-mapped before the subtitle OpenCV stage")
+    reader = RawBGRReader(video_path, width, height, color_profile)
 
     crf = int(cfg_get(render_cfg, "encoding.crf", 18))
     preset = str(cfg_get(render_cfg, "encoding.preset", "veryfast"))
     _env_pf = os.environ.get("AUTOMONTAGE_INTERMEDIATE_PIX_FMT") or ""
     pix_fmt = str(_env_pf or cfg_get(render_cfg, "encoding.pix_fmt", None) or "yuv420p")
-    color_args = sdr_color_args(video_path)
+    color_args = encoder_color_args(raw_bgr_output_profile(color_profile), "h264")
     process = start_ffmpeg(output_path, video_path, width, height, fps, crf, preset, pix_fmt, color_args)
     if process.stdin is None:
         fail("ffmpeg stdin is unavailable")
@@ -472,7 +463,7 @@ def main() -> None:
         while True:
             if total_frames and frame_index >= total_frames:
                 break
-            ok, frame = cap.read()
+            ok, frame = reader.read()
             if not ok:
                 missing = total_frames - frame_index if total_frames else 0
                 if last_decoded_frame is None or missing <= 0 or missing > max(1, int(round(fps))):
@@ -502,6 +493,7 @@ def main() -> None:
         fail("ffmpeg pipe closed unexpectedly")
     finally:
         cap.release()
+        reader.close()
         try:
             process.stdin.close()
         except Exception:
