@@ -19,13 +19,22 @@ from typing import Any, Callable
 
 from PIL import Image, ImageOps
 
-from .color_pipeline import (
-    bt709_sdr_profile,
-    encoder_color_args,
-    is_bt709_sdr,
-    probe_color_profile,
-    sdr_to_bt709_filter,
-)
+try:
+    from .color_pipeline import (
+        bt709_sdr_profile,
+        encoder_color_args,
+        is_bt709_sdr,
+        probe_color_profile,
+        sdr_to_bt709_filter,
+    )
+except ImportError:  # YouTubePublisher is also executed as a bridge script.
+    from color_pipeline import (  # noqa: E402
+        bt709_sdr_profile,
+        encoder_color_args,
+        is_bt709_sdr,
+        probe_color_profile,
+        sdr_to_bt709_filter,
+    )
 
 try:
     import certifi

@@ -1,5 +1,6 @@
 import shutil
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -138,6 +139,14 @@ class YouTubeFastPathTests(unittest.TestCase):
     def make_publisher(self):
         from montage.youtube_publisher import YouTubePublisher
         return YouTubePublisher.__new__(YouTubePublisher)
+
+    def test_youtube_bridge_script_imports_when_run_directly(self):
+        script = Path(__file__).resolve().parent / "montage" / "youtube_publisher.py"
+        result = subprocess.run(
+            [sys.executable, str(script)], capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertNotIn("attempted relative import", result.stderr)
 
     def test_youtube_accepts_hevc_master_for_copy(self):
         source = self.root / "hevc.mp4"
