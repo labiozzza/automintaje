@@ -1894,8 +1894,78 @@ def _file_identity(path) -> str:
         return str(path)
 
 
+def _platform_copy_probe(path) -> dict:
+    """Cheap stream-set description of a file (used by platform remux fast paths)."""
+    result = subprocess.run(
+        [shutil.which("ffprobe") or "ffprobe", "-v", "error", "-show_entries",
+         ("stream=index,codec_type,codec_name,profile,level,pix_fmt,avg_frame_rate,width,height,sample_rate,"
+          "color_primaries,color_transfer,color_space,color_range:"
+          "format=format_name,duration"),
+         "-of", "json", str(path)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"ffprobe failed: {result.stderr.strip()[-400:]}")
+    data = json.loads(result.stdout or "{}")
+    streams = data.get("streams") or []
+    video = next((s for s in streams if str(s.get("codec_type")) == "video"), {}) or {}
+    audio = next((s for s in streams if str(s.get("codec_type")) == "audio"), {}) or {}
+    fmt = data.get("format") or {}
+    return {"video": video, "audio": audio, "format_name": str(fmt.get("format_name") or "")}
+
+
+def _mp4_copy_ready(probe: dict) -> bool:
+    """True when the container and stream set can be remuxed for a platform as-is."""
+    fmt = str(probe.get("format_name") or "")
+    if not ("mp4" in fmt or "mov" in fmt):
+        return False
+    video = probe.get("video") or {}
+    if str(video.get("codec_name") or "").lower() not in {"h264", "hevc"}:
+        return False
+    codec = str(video.get("codec_name") or "").lower()
+    profile_name = str(video.get("profile") or "").lower()
+    if not profile_name:
+        return False
+    if codec == "h264" and profile_name not in {"baseline", "constrained baseline", "main", "high"}:
+        return False
+    if codec == "hevc" and "main" not in profile_name:
+        return False
+    try:
+        level = int(video.get("level") or 0)
+    except (TypeError, ValueError):
+        level = 0
+    if level <= 0 or level > 153:
+        return False
+    if str(video.get("pix_fmt") or "").lower() != "yuv420p":
+        return False
+    width = video.get("width")
+    height = video.get("height")
+    if not isinstance(width, int) or not isinstance(height, int):
+        return False
+    if width <= 0 or width % 2 or height % 2:
+        return False
+    try:
+        from fractions import Fraction
+        fps = float(Fraction(str(video.get("avg_frame_rate") or "")))
+    except (ValueError, ZeroDivisionError):
+        return False
+    if not 0 < fps <= 60:
+        return False
+    transfer = str(video.get("color_transfer") or "").lower()
+    primaries = str(video.get("color_primaries") or "").lower()
+    if transfer in {"smpte2084", "arib-std-b67"} or primaries == "bt2020":
+        return False
+    audio = probe.get("audio") or {}
+    if audio and str(audio.get("codec_name") or "").lower() != "aac":
+        return False
+    return True
+
+
+PREP_EXPORT_PROFILE = "b3-2"
+
+
 def _publish_prep_signature(job: dict, key: str, source_path) -> str:
-    parts = [key, _file_identity(source_path)]
+    parts = [key, _file_identity(source_path), PREP_EXPORT_PROFILE]
     if key.endswith(":mirror"):
         parts.append(_mirrored_variant_signature(job))
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
@@ -2014,7 +2084,57 @@ def _render_prepared_video(purpose: str, source, target_dir, stem: str,
         except Exception:
             duration = 30.0
         output = target_dir / f"{stem}_tg.mp4"
-        montage_engine._transcode_to_fit(source, output, 45 * 1024 * 1024, duration, progress,
+        telegram_limit = 45 * 1024 * 1024
+        try:
+            copy_ready = source.stat().st_size <= telegram_limit and _mp4_copy_ready(_platform_copy_probe(source))
+        except Exception:
+            copy_ready = False
+        if copy_ready:
+            try:
+                ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+                output.unlink(missing_ok=True)
+                command = [
+                    ffmpeg, "-y", "-i", str(source),
+                    "-map", "0:v:0", "-map", "0:a:0?",
+                    "-c", "copy", "-bsf:v",
+                    ("h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0"
+                     if str(_platform_copy_probe(source)["video"].get("codec_name") or "").lower() == "h264"
+                     else "hevc_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0"),
+                    "-movflags", "+faststart", str(output),
+                ]
+                process = subprocess.Popen(command, stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.DEVNULL)
+                try:
+                    while True:
+                        try:
+                            code = process.wait(timeout=0.5)
+                            break
+                        except subprocess.TimeoutExpired:
+                            if cancel_cb is not None:
+                                try:
+                                    cancelled_now = bool(cancel_cb())
+                                except Exception:
+                                    cancelled_now = False
+                                if cancelled_now:
+                                    process.terminate()
+                                    try:
+                                        process.wait(timeout=5)
+                                    except subprocess.TimeoutExpired:
+                                        process.kill()
+                                        process.wait()
+                                    raise montage_engine.MontageCancelled("Отменено пользователем")
+                except BaseException:
+                    if process.poll() is None:
+                        process.terminate()
+                    raise
+                if code == 0 and output.exists():
+                    progress(100, "Telegram: поток уже совместим — remux без перекодирования")
+                    return output
+            except montage_engine.MontageCancelled:
+                raise
+            except Exception:
+                pass
+        montage_engine._transcode_to_fit(source, output, telegram_limit, duration, progress,
                                          cancel_cb=cancel_cb)
         return output
     from montage.instagram_publisher import InstagramPublisher

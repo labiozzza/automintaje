@@ -756,6 +756,11 @@ def render_montage(
                 args_l += ["-colorspace", cs]
             if cr:
                 args_l += ["-color_range", cr]
+            # Output color options of this ffmpeg build drop primaries/trc for
+            # x264; VUI params are the reliable channel.  Append them when the
+            # source is fully tagged BT.709 SDR (mirrors the args above).
+            if {cp or "bt709", ct or "bt709", cs or "bt709"} <= {"bt709"}:
+                args_l += ["-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709"]
             return args_l
         except Exception:
             return []
@@ -811,7 +816,14 @@ def render_montage(
                             _rot = None
                         if _rot is not None:
                             break
-            _rover = {"rotate": int(_rot or 0) % 360, "w": int(_st.get("width") or 0), "h": int(_st.get("height") or 0)}
+            _rover = {
+                "rotate": int(_rot or 0) % 360,
+                "w": int(_st.get("width") or 0),
+                "h": int(_st.get("height") or 0),
+                "transfer": str(_st.get("color_transfer") or ""),
+                "primaries": str(_st.get("color_primaries") or ""),
+                "space": str(_st.get("color_space") or ""),
+            }
             break
     except Exception:
         _rover = {}
@@ -859,7 +871,51 @@ def render_montage(
             _emit()
 
     _start("prepare", "Проверка и подготовка исходника...")
-    _done("prepare", "Исходник готов")
+
+    # HDR sources cannot feed the 8-bit OpenCV pipeline directly: tone-map to
+    # SDR BT.709 first so the creative stages operate on correct 8-bit frames.
+    if str(_rover.get("transfer") or "").lower() in ("smpte2084", "arib-std-b67") and Path(source_video).exists():
+        _tonemap_ok = False
+        try:
+            _flist = subprocess.check_output(
+                [shutil.which("ffmpeg") or "ffmpeg", "-hide_banner", "-filters"],
+                stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", timeout=60,
+            )
+            _tonemap_ok = " zscale " in _flist
+        except Exception:
+            _tonemap_ok = False
+        if _tonemap_ok:
+            _hdr_in = str(_rover.get("transfer")).lower()
+            _sdr_source = workdir / "sdr_source.mp4"
+            _hdr_cmd = [
+                shutil.which("ffmpeg") or "ffmpeg", "-y", "-noautorotate", "-display_rotation:v:0", "0",
+                "-i", str(source_video), "-map", "0:v:0", "-map", "0:a:0?",
+                "-vf", (
+                    f"zscale=t={_hdr_in}:m=2020_ncl,format=gbrpf32le,zscale=t=linear,"
+                    "tonemap=mobius:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p"
+                ),
+                "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p",
+                "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709", "-color_range", "tv",
+                "-c:a", "copy", "-movflags", "+faststart", str(_sdr_source),
+            ]
+            _record_cmd("sdr_normalize", _hdr_cmd)
+            _code = run_ffmpeg_progress(_hdr_cmd, duration=_duration, cwd=workdir,
+                                        log_path=workdir / "sdr_normalize.log",
+                                        on_progress=lambda p: _upd("prepare", p * 0.9, "HDR → SDR tone mapping..."),
+                                        timeout=1800, job_id=job_id, cancel_cb=cancel_cb)
+            if _code == 0 and _sdr_source.exists():
+                source_video = _sdr_source
+                _rover = {"rotate": int(_rover.get("rotate") or 0), "w": int(_rover.get("w") or 0),
+                          "h": int(_rover.get("h") or 0), "transfer": "", "primaries": "", "space": ""}
+                _done("prepare", "Исходник преобразован в SDR (BT.709 tone mapping)")
+            else:
+                _done("prepare", "HDR→SDR не выполнен")
+                raise RuntimeError("HDR источник обнаружен, но преобразование в SDR завершилось ошибкой")
+        else:
+            _done("prepare", "HDR tone mapping недоступен")
+            raise RuntimeError("HDR источник обнаружен, но FFmpeg zscale недоступен")
+    else:
+        _done("prepare", "Исходник готов")
 
     if _rover.get("rotate") in (90, 270):
         _start("rotate", "Нормализация ориентации (автоповорот)...")
@@ -1451,7 +1507,9 @@ def _transcode_to_fit(source: Path, output: Path, target_bytes: int, duration: f
         cmd = [ffmpeg, "-y", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?",
                "-c:v", "libx264", "-preset", "medium", "-b:v", str(bitrate),
                "-maxrate", str(int(bitrate * 1.08)), "-bufsize", str(int(bitrate * 2.16)),
-               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
+               "-pix_fmt", "yuv420p",
+               "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709",
+               "-color_range", "tv", "-c:a", "aac", "-b:a", "160k",
                "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", str(output)]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                 text=True, encoding="utf-8", errors="replace")

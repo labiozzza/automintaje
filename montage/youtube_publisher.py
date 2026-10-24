@@ -148,6 +148,106 @@ class YouTubePublisher:
         if result.get("status") != "auth_ok":
             raise RuntimeError("YouTube reauthorization failed")
 
+    def _stream_profile(self, video_path: Path) -> dict[str, Any]:
+        ffprobe = shutil.which("ffprobe") or "ffprobe"
+        result = subprocess.run(
+            [ffprobe, "-v", "error",
+             "-show_entries",
+             ("stream=index,codec_type,codec_name,profile,level,pix_fmt,avg_frame_rate,width,height,sample_rate,"
+              "color_primaries,color_transfer,color_space,color_range:"
+              "format=format_name,duration"),
+             "-of", "json", str(video_path)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("Не удалось определить профиль YouTube-видео")
+        data = json.loads(result.stdout or "{}")
+        streams = data.get("streams") or []
+        video = next((s for s in streams if str(s.get("codec_type")) == "video"), None)
+        audio = next((s for s in streams if str(s.get("codec_type")) == "audio"), None)
+        fmt = data.get("format") or {}
+        try:
+            duration = float(fmt.get("duration") or 0)
+        except (TypeError, ValueError):
+            duration = 0.0
+        return {
+            "video": video or {},
+            "audio": audio or {},
+            "format_name": str(fmt.get("format_name") or ""),
+            "duration": duration,
+        }
+
+    def _copy_ready_for_youtube(self, profile: dict[str, Any]) -> bool:
+        """True when the master stream set is accepted by YouTube as-is."""
+        video = profile.get("video") or {}
+        audio = profile.get("audio") or {}
+        fmt = profile.get("format_name") or ""
+        if not ("mp4" in fmt or "mov" in fmt):
+            return False
+        if str(video.get("codec_name") or "").lower() not in {"h264", "hevc"}:
+            return False
+        codec = str(video.get("codec_name") or "").lower()
+        profile_name = str(video.get("profile") or "").lower()
+        if not profile_name:
+            return False
+        if codec == "h264" and profile_name not in {"baseline", "constrained baseline", "main", "high"}:
+            return False
+        if codec == "hevc" and "main" not in profile_name:
+            return False
+        try:
+            level = int(video.get("level") or 0)
+        except (TypeError, ValueError):
+            level = 0
+        if level <= 0 or level > 156:
+            return False
+        if str(video.get("pix_fmt") or "").lower() != "yuv420p":
+            return False
+        width = video.get("width")
+        height = video.get("height")
+        if not isinstance(width, int) or not isinstance(height, int):
+            return False
+        if width <= 0 or width % 2 or height % 2:
+            return False
+        try:
+            from fractions import Fraction as _Fraction
+            fps_value = float(_Fraction(str(video.get("avg_frame_rate") or "")))
+        except (ValueError, ZeroDivisionError):
+            return False
+        if not 0 < fps_value <= 60:
+            return False
+        if audio:
+            if str(audio.get("codec_name") or "").lower() != "aac":
+                return False
+            sample_rate = str(audio.get("sample_rate") or "")
+            # YouTube accepts 44.1k/48k AAC natively (it re-processes audio server-side).
+            if sample_rate and sample_rate not in {"44100", "48000"}:
+                return False
+        transfer = str(video.get("color_transfer") or "").lower()
+        primaries = str(video.get("color_primaries") or "").lower()
+        if transfer in {"smpte2084", "arib-std-b67"} or primaries == "bt2020":
+            return False
+        return True
+
+    def _remux_copy(self, source: Path, output: Path, progress: Callable[[float, str], None]) -> Path:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.unlink(missing_ok=True)
+        ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+        command = [
+            ffmpeg, "-y", "-i", str(source),
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-c", "copy", "-bsf:v",
+            ("h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0"
+             if str(self._stream_profile(source)["video"].get("codec_name") or "").lower() == "h264"
+             else "hevc_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0"),
+            "-movflags", "+faststart", str(output),
+        ]
+        result = subprocess.run(command, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=1800)
+        if result.returncode != 0 or not output.exists():
+            raise RuntimeError("Не удалось подготовить YouTube-версию копированием потоков")
+        progress(100, "YouTube: поток уже совместим — remux без перекодирования")
+        return output
+
     def _duration(self, video_path: Path) -> float:
         ffprobe = shutil.which("ffprobe") or "ffprobe"
         result = subprocess.run(
@@ -174,6 +274,9 @@ class YouTubePublisher:
         return str(nearest) if abs(float(nearest) - value) <= 1.0 else str(source.limit_denominator(1001))
 
     def prepare_video(self, source: Path, output: Path, progress: Callable[[float, str], None]) -> Path:
+        profile = self._stream_profile(source)
+        if self._copy_ready_for_youtube(profile):
+            return self._remux_copy(source, output, progress)
         duration = max(0.001, self._duration(source))
         fps = self._frame_rate(source)
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -184,8 +287,9 @@ class YouTubePublisher:
             "-map", "0:v:0", "-map", "0:a:0?",
             "-vf", f"setpts=PTS-STARTPTS,fps={fps}",
             "-af", "aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS",
-            "-c:v", "libx264", "-profile:v", "high", "-level:v", "4.1",
+            "-c:v", "libx264", "-profile:v", "high",
             "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p",
+            "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709", "-color_range", "tv",
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
             "-fps_mode", "cfr", "-shortest",
             "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", str(output),

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hmac
 import importlib.util
-import os
 import re
 import shutil
 import subprocess
@@ -108,6 +107,147 @@ class InstagramPublisher:
             raise RuntimeError("cannot detect publication video duration")
         return duration
 
+    def _stream_profile(self, source: Path) -> dict[str, Any]:
+        result = subprocess.run(
+            [
+                self._ffprobe_path(),
+                "-v", "error",
+                "-show_entries",
+                ("stream=index,codec_type,codec_name,profile,level,pix_fmt,avg_frame_rate,width,height,sample_rate,"
+                 "color_primaries,color_transfer,color_space,color_range:"
+                 "format=format_name,duration"),
+                "-of", "json", str(source),
+            ],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"ffprobe failed: {result.stderr.strip()[-500:]}")
+        import json as _json
+        data = _json.loads(result.stdout or "{}")
+        streams = data.get("streams") or []
+        video = next((s for s in streams if str(s.get("codec_type")) == "video"), None)
+        audio = next((s for s in streams if str(s.get("codec_type")) == "audio"), None)
+        fmt = (data.get("format") or {})
+        try:
+            duration = float(fmt.get("duration") or 0)
+        except (TypeError, ValueError):
+            duration = 0.0
+        return {
+            "video": video or {},
+            "audio": audio or {},
+            "format_name": str(fmt.get("format_name") or ""),
+            "duration": duration,
+        }
+
+    def _ig_fps(self, source: Path, profile: dict[str, Any] | None = None) -> str:
+        """FPS value for the IG export: keep the original rate when in 23-60."""
+        if profile is None:
+            profile = self._stream_profile(source)
+        raw = str((profile.get("video") or {}).get("avg_frame_rate") or "")
+        try:
+            from fractions import Fraction as _Fraction
+            rate = _Fraction(raw)
+            value = float(rate)
+        except (ValueError, ZeroDivisionError):
+            return "30"
+        if not value > 0:
+            return "30"
+        if 23 <= value <= 60:
+            normalized = rate.limit_denominator(1001)
+            return str(normalized.numerator) if normalized.denominator == 1 else str(normalized)
+        standards = [24, 25, 30, 50, 60]
+        nearest = min(standards, key=lambda s: abs(s - value))
+        return str(nearest)
+
+    def _copy_ready_for_ig(self, source: Path, profile: dict[str, Any]) -> bool:
+        """True when the master already satisfies the Instagram/GitHub chain,
+        so a remux (stream copy) is enough and no re-encode is needed."""
+        video = profile.get("video") or {}
+        audio = profile.get("audio") or {}
+        if source.stat().st_size > GITHUB_LIMIT_BYTES:
+            return False
+        fmt = profile.get("format_name") or ""
+        if not ({"mp4", "mov"} & {p.strip() for p in fmt.split(",")} or "mp4" in fmt or "mov" in fmt):
+            return False
+        if str(video.get("codec_name") or "").lower() not in {"h264", "hevc"}:
+            return False
+        codec = str(video.get("codec_name") or "").lower()
+        profile_name = str(video.get("profile") or "").lower()
+        if not profile_name:
+            return False
+        if codec == "h264" and profile_name not in {"baseline", "constrained baseline", "main", "high"}:
+            return False
+        if codec == "hevc" and "main" not in profile_name:
+            return False
+        try:
+            level = int(video.get("level") or 0)
+        except (TypeError, ValueError):
+            level = 0
+        if level <= 0:
+            return False
+        if codec == "h264" and level > 42:
+            return False
+        if codec == "hevc" and level and level > 153:
+            return False
+        if str(video.get("pix_fmt") or "").lower() != "yuv420p":
+            return False
+        width = video.get("width")
+        height = video.get("height")
+        if not isinstance(width, int) or not isinstance(height, int):
+            return False
+        if width <= 0 or width % 2 or height % 2 or width > 1920:
+            return False
+        try:
+            from fractions import Fraction as _Fraction
+            fps_value = float(_Fraction(str(video.get("avg_frame_rate") or "")))
+        except (ValueError, ZeroDivisionError):
+            return False
+        if not 23 <= fps_value <= 60:
+            return False
+        duration = float(profile.get("duration") or 0)
+        if not 3 <= duration <= 15 * 60:
+            return False
+        transfer = str(video.get("color_transfer") or "").lower()
+        primaries = str(video.get("color_primaries") or "").lower()
+        if transfer in {"smpte2084", "arib-std-b67"} or primaries == "bt2020":
+            return False
+        if audio:
+            if str(audio.get("codec_name") or "").lower() != "aac":
+                return False
+            sample_rate = str(audio.get("sample_rate") or "")
+            # 48000 is recommended for Reels; 44100 is accepted (validator only warns).
+            if sample_rate and sample_rate not in {"44100", "48000"}:
+                return False
+        return True
+
+    def _remux_copy(self, source: Path, output: Path, progress: Callable[[float, str], None]) -> None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.unlink(missing_ok=True)
+        self.on_log(f"{source.name}: платформа уже совместима — remux без перекодирования")
+        command = [
+            self.ffmpeg, "-y", "-i", str(source),
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-c", "copy", "-bsf:v",
+            ("h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0"
+             if str(self._stream_profile(source)["video"].get("codec_name") or "").lower() == "h264"
+             else "hevc_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0"),
+            "-movflags", "+faststart",
+            "-progress", "pipe:1", "-nostats", str(output),
+        ]
+        with self.log_path.open("a", encoding="utf-8", errors="replace") as log:
+            process = subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=log, text=True,
+                encoding="utf-8", errors="replace",
+            )
+            assert process.stdout is not None
+            for _line in process.stdout:
+                pass
+            process.stdout.close()
+            code = process.wait()
+        if code != 0 or not output.exists():
+            raise RuntimeError("publication remux copy failed")
+        progress(100, "Файл подготовлен для GitHub (без перекодирования)")
+
     def _transcode_for_github(
         self,
         source: Path,
@@ -115,6 +255,7 @@ class InstagramPublisher:
         progress: Callable[[float, str], None],
     ) -> None:
         duration = self._duration(source)
+        fps = self._ig_fps(source)
         audio_bitrate = 160_000
         target_video_bitrate = max(500_000, int(GITHUB_TARGET_BYTES * 8 * 0.96 / duration) - audio_bitrate)
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -134,11 +275,13 @@ class InstagramPublisher:
                 "-map",
                 "0:a:0?",
                 "-vf",
-                "setpts=PTS-STARTPTS,fps=30",
+                f"setpts=PTS-STARTPTS,fps={fps}",
                 "-af",
                 "aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS",
                 "-c:v",
                 "libx264",
+                "-profile:v", "high",
+                "-level:v", "4.2",
                 "-preset",
                 "medium",
                 "-b:v",
@@ -149,6 +292,8 @@ class InstagramPublisher:
                 str(maxrate * 2),
                 "-pix_fmt",
                 "yuv420p",
+                "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709",
+                "-color_range", "tv",
                 "-c:a",
                 "aac",
                 "-b:a",
@@ -205,15 +350,17 @@ class InstagramPublisher:
         progress: Callable[[float, str], None],
     ) -> None:
         duration = self._duration(source)
+        fps = self._ig_fps(source)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.unlink(missing_ok=True)
         command = [
             self.ffmpeg, "-y", "-fflags", "+genpts", "-i", str(source),
             "-map", "0:v:0", "-map", "0:a:0?",
-            "-vf", "setpts=PTS-STARTPTS,fps=30",
+            "-vf", f"setpts=PTS-STARTPTS,fps={fps}",
             "-af", "aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS",
-            "-c:v", "libx264", "-profile:v", "high", "-level:v", "4.1",
+            "-c:v", "libx264", "-profile:v", "high", "-level:v", "4.2",
             "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+            "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709", "-color_range", "tv",
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
             "-fps_mode", "cfr", "-shortest", "-movflags", "+faststart",
             "-progress", "pipe:1", "-nostats", str(output),
@@ -256,16 +403,16 @@ class InstagramPublisher:
         generation = time.time_ns()
         staged = staging_dir / f"reel_{job_id}_{variant}_{generation}.mp4"
         staged.unlink(missing_ok=True)
-        self.on_log(f"{source.name}: создаю H.264 CFR версию с синхронизированным звуком")
-        self._normalize_for_publication(source, staged, progress)
+        profile = self._stream_profile(source)
+        if self._copy_ready_for_ig(source, profile):
+            self._remux_copy(source, staged, progress)
+        else:
+            self.on_log(f"{source.name}: создаю H.264 CFR версию с синхронизированным звуком")
+            self._normalize_for_publication(source, staged, progress)
         if staged.stat().st_size > GITHUB_LIMIT_BYTES:
-            oversized = staged.with_name(f".{staged.stem}-oversized.mp4")
-            os.replace(staged, oversized)
-            try:
-                self.on_log("Нормализованный файл больше 100 MB, дополнительно сжимаю")
-                self._transcode_for_github(oversized, staged, progress)
-            finally:
-                oversized.unlink(missing_ok=True)
+            staged.unlink(missing_ok=True)
+            self.on_log("Мастер больше лимита GitHub, пересжатие из мастера с пересчётом битрейта")
+            self._transcode_for_github(source, staged, progress)
         self.main.validate_local_video(staged)
         return staged
 
