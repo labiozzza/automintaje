@@ -153,6 +153,7 @@ class OperationRecoveryTest(unittest.TestCase):
         self.assertEqual(statuses["tg"], "failed")
         self.assertIn("ig", job["publish_unknown"])
         self.assertIn("fb", job["publish_errors"])
+        self.assertEqual(job["publish_progress"]["fb"]["progress"], 99)
         self.assertEqual(job["publish_progress"]["ig"]["status"], "unknown")
         self.assertIsNone(job["publish_progress"]["ig"]["progress"])
         self.assertEqual(job["publish_progress"]["yt"]["status"], "done")

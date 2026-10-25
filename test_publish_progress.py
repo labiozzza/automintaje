@@ -38,6 +38,7 @@ class PublishJobAggregationTest(unittest.TestCase):
     def test_partial_failure_is_not_masked(self):
         targets = [self._target("ig", "instagram"), self._target("yt", "youtube")]
         statuses = {}
+        progress_values = {}
 
         def fake_publish_targets(**kwargs):
             target = kwargs["targets"][0]
@@ -47,6 +48,7 @@ class PublishJobAggregationTest(unittest.TestCase):
 
         def target_cb(target_id, percent, detail, status):
             statuses[target_id] = status
+            progress_values[target_id] = percent
 
         with mock.patch.object(engine, "_publish_targets", side_effect=fake_publish_targets):
             result = engine.publish_job(
@@ -59,6 +61,28 @@ class PublishJobAggregationTest(unittest.TestCase):
         self.assertIn("quota", result["errors"]["yt"])
         self.assertEqual(statuses["ig"], "done")
         self.assertEqual(statuses["yt"], "error")
+        self.assertLess(progress_values["yt"], 100)
+
+    def test_full_transfer_without_publish_confirmation_does_not_finish_at_100(self):
+        targets = [self._target("ig", "instagram")]
+        progress_values = []
+
+        def fake_publish_targets(**kwargs):
+            kwargs["progress_cb"](100, "upload", "Загрузка файла завершена")
+            raise RuntimeError("server did not confirm publish")
+
+        def target_cb(target_id, percent, detail, status):
+            progress_values.append((percent, status))
+
+        with mock.patch.object(engine, "_publish_targets", side_effect=fake_publish_targets):
+            result = engine.publish_job(
+                job_id="j", workdir=Path("/tmp"), source_video=Path("/tmp/x.mp4"),
+                targets=targets, progress_cb=lambda *a: None, log_cb=lambda *a: None,
+                target_progress_cb=target_cb,
+            )
+        self.assertIn("ig", result["errors"])
+        self.assertEqual(progress_values[-1][1], "error")
+        self.assertLess(progress_values[-1][0], 100)
 
     def test_all_failure_returns_errors(self):
         targets = [self._target("ig", "instagram")]
@@ -110,12 +134,14 @@ class PublishJobAggregationTest(unittest.TestCase):
         targets = [self._target("ig", "instagram")]
         order = []
         confirmed = {}
+        progress_values = []
 
         def fake_publish_targets(**kwargs):
             return {"results": {"ig": {"media_id": "m1", "permalink": "https://x/ig"}}}
 
         def target_cb(target_id, percent, detail, status):
             order.append(("progress", status))
+            progress_values.append((percent, status))
 
         def confirmed_cb(target_id, data):
             confirmed[target_id] = data
@@ -131,10 +157,12 @@ class PublishJobAggregationTest(unittest.TestCase):
         self.assertEqual(confirmed["ig"]["media_id"], "m1")
         self.assertEqual(order[0], ("confirmed",))
         self.assertEqual(order[1], ("progress", "done"))
+        self.assertEqual(progress_values[-1], (100, "done"))
 
     def test_ambiguous_publish_reported_as_unknown(self):
         targets = [self._target("ig", "instagram")]
         statuses = {}
+        progress_values = {}
 
         def fake_publish_targets(**kwargs):
             raise RuntimeError(
@@ -144,6 +172,7 @@ class PublishJobAggregationTest(unittest.TestCase):
 
         def target_cb(target_id, percent, detail, status):
             statuses[target_id] = status
+            progress_values[target_id] = percent
 
         with mock.patch.object(engine, "_publish_targets", side_effect=fake_publish_targets):
             result = engine.publish_job(
@@ -154,6 +183,7 @@ class PublishJobAggregationTest(unittest.TestCase):
         self.assertEqual(statuses["ig"], "unknown")
         self.assertEqual(set(result["errors"]), {"ig"})
         self.assertIn("AMBIGUOUS_MEDIA_PUBLISH", result["errors"]["ig"])
+        self.assertIsNone(progress_values["ig"])
 
 
 class ProcessPublishStatusTest(unittest.TestCase):
@@ -161,6 +191,9 @@ class ProcessPublishStatusTest(unittest.TestCase):
         job = {
             "kind": "montage",
             "status": "done",
+            "progress": 100,
+            "stage": "done",
+            "detail": "Готово",
             "result": {"result_video": "/tmp/does-not-matter.mp4"},
             "video_path": "/tmp/does-not-matter.mp4",
             "params": {},
@@ -183,6 +216,58 @@ class ProcessPublishStatusTest(unittest.TestCase):
                 asyncio.run(app_module.process_publish(job_id, targets))
         finally:
             return app_module.jobs.pop(job_id, None)
+
+    def test_publish_request_snapshot_is_live_before_background_worker_starts(self):
+        import app as app_module
+
+        job = self._job("immediate")
+        targets = [
+            {"id":"ig", "kind":"instagram", "label":"Instagram"},
+            {"id":"yt", "kind":"youtube", "label":"YouTube"},
+        ]
+        app_module._initialize_publish_attempt(job, targets, preparing_ids={"ig"})
+        self.assertEqual(job["status"], "publishing")
+        self.assertEqual(job["publish_progress"]["ig"]["status"], "preparing")
+        self.assertEqual(job["publish_progress"]["yt"]["status"], "queued")
+        self.assertEqual(job["publish_progress"]["ig"]["progress"], 0)
+        self.assertEqual(job["last_publish_targets"], targets)
+
+    def test_publish_route_marks_job_active_before_first_poll(self):
+        import app as app_module
+        from fastapi.testclient import TestClient
+
+        job_id = "publish_first_poll"
+        old_job = app_module.jobs.get(job_id)
+        app_module.jobs[job_id] = self._job(job_id)
+        lock = None
+
+        def do_not_start(job_id, coroutine):
+            coroutine.close()
+
+        try:
+            with TestClient(app_module.app) as client, \
+                    mock.patch.object(app_module, "_publish_readiness", return_value=({}, [])), \
+                    mock.patch.object(app_module, "_save_montage_job", lambda *_: None), \
+                    mock.patch.object(app_module, "_track_montage_task", do_not_start):
+                response = client.post(
+                    f"/api/montage/{job_id}/publish",
+                    data={"targets_json":"[\"instagram_trial\"]"},
+                )
+                first_poll = client.get(f"/api/montage/result/{job_id}")
+            lock = app_module.publish_locks.get(job_id)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(first_poll.status_code, 200)
+            state = first_poll.json()
+            self.assertEqual(state["status"], "publishing")
+            self.assertEqual(state["publish_progress"]["instagram_trial"]["status"], "queued")
+        finally:
+            if lock is not None and lock.locked():
+                lock.release()
+            app_module.publish_locks.pop(job_id, None)
+            if old_job is None:
+                app_module.jobs.pop(job_id, None)
+            else:
+                app_module.jobs[job_id] = old_job
 
     def test_partial_publish_job_status_not_masked(self):
         import app as app_module
@@ -208,6 +293,7 @@ class ProcessPublishStatusTest(unittest.TestCase):
         self.assertEqual(set(job["publish_errors"]), {"yt"})
         self.assertEqual(job["publish_status"]["ig"], "published")
         self.assertEqual(job["publish_status"]["yt"], "failed")
+        self.assertLess(job["publish_progress"]["yt"]["progress"], 100)
         self.assertIn("ошибк", job["detail"].lower())
         self.assertIn("ig", job["publish"])
 
@@ -239,6 +325,7 @@ class ProcessPublishStatusTest(unittest.TestCase):
         job = self._run(job_id, targets, fake_publish_job)
 
         self.assertEqual(job["publish_status"]["ig"], "unknown")
+        self.assertIsNone(job["publish_progress"]["ig"]["progress"])
         self.assertEqual(set(job["publish_unknown"]), {"ig"})
         self.assertEqual(job["publish_errors"], {})
         self.assertIn("проверк", job["detail"].lower())
@@ -260,6 +347,7 @@ class ProcessPublishStatusTest(unittest.TestCase):
         self.assertEqual(set(job["publish_errors"]), {"ig", "yt"})
         self.assertEqual(set(job["publish_status"]), {"ig", "yt"})
         self.assertEqual(set(job["publish_status"].values()), {"failed"})
+        self.assertTrue(all(item["progress"] < 100 for item in job["publish_progress"].values()))
         self.assertNotIn("ig", job.get("publish_unknown") or {})
 
         retry_targets = [t for t in targets if t["id"] in job["publish_errors"]]

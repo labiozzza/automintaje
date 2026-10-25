@@ -122,6 +122,15 @@ def main():
         check("all-failed warning", "Ни одна площадка" in page.text_content("#operationDetail"),
               page.text_content("#operationDetail"))
 
+        # Failed publish bars stay at their last upload progress, never 100%.
+        page.evaluate("""() => renderPublishProgress({
+          yt: {label:'YouTube', progress:100, status:'error', detail:'Квота'}
+        })""")
+        failed_label = page.locator("#montagePublishLiveProgress .publish-live-item[data-target='yt'] .publish-live-head span").inner_text()
+        failed_fill = page.locator("#montagePublishLiveProgress .publish-live-item[data-target='yt'] .publish-live-fill").get_attribute("style")
+        check("failed publish bar is capped below 100", "99%" in failed_label and "99%" in failed_fill,
+              f"{failed_label}; {failed_fill}")
+
         # 7c. mixed done/error/unknown -> needs manual check, no auto-republish
         inject(page, {"publish_progress": {
             "ig": {"label": "Instagram", "progress": 100, "status": "done", "detail": "Опубликовано"},

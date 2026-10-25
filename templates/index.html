@@ -5483,7 +5483,9 @@ function renderPublishProgress(items) {
   const statusNames = {queued:'В очереди',preparing:'Подготовка',publishing:'Публикация',done:'Готово',error:'Ошибка',unknown:'Результат неизвестен'};
   container.innerHTML = Object.entries(items || {}).map(([id, item]) => {
     const status = item.status || 'queued';
-    const progress = status === 'unknown' ? null : Math.max(0, Math.min(100, Number(item.progress) || 0));
+    const rawProgress = Number(item.progress);
+    const progress = status === 'unknown' ? null
+      : Math.max(0, Math.min(status === 'done' ? 100 : 99, Number.isFinite(rawProgress) ? rawProgress : 0));
     const fill = status === 'unknown' ? '<div class="publish-live-fill ind"></div>'
       : `<div class="publish-live-fill" style="width:${progress}%"></div>`;
     const percentText = status === 'unknown' ? '—' : progress.toFixed(0) + '%';

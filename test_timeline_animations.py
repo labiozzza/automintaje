@@ -122,12 +122,20 @@ class TimelineLayersTests(unittest.TestCase):
         # Dog manifest fps is 6 -> unchanged behavior for single animations.
         self.assertEqual(layers[0]["fps"], 6.0)
 
-    def test_duplicates_and_unknown(self):
-        layers, _ = self.engine.timeline_animation_layers([
-            {"id": "Cat_x"},
-            {"id": "Cat_x"},
+    def test_repeated_ids_are_independent_instances_and_unknown_is_rejected(self):
+        layers, used = self.engine.timeline_animation_layers([
+            {"id": "Cat_x", "start": 1.0, "offset_x": -30},
+            {"id": "Dog_x", "start": 3.0},
+            {"id": "Dog_x", "start": 7.5, "offset_x": 42},
         ])
-        self.assertEqual(len(layers), 1)
+        self.assertEqual(len(layers), 3)
+        self.assertEqual([layer["animation_id"] for layer in layers], ["Cat_x", "Dog_x", "Dog_x"])
+        self.assertEqual([layer["start"] for layer in layers], [1.0, 3.0, 7.5])
+        self.assertEqual([layer["uid"] for layer in layers], [
+            "timeline-animation-0", "timeline-animation-1", "timeline-animation-2",
+        ])
+        self.assertEqual(layers[2]["offset_x"], 42)
+        self.assertEqual([item["start"] for item in used], [1.0, 3.0, 7.5])
         with self.assertRaises(RuntimeError):
             self.engine.timeline_animation_layers([{"id": "nope_missing"}])
 

@@ -2892,6 +2892,44 @@ async def process_prepare_publish(job_id: str, targets: list, cover_path: Option
         _release_prep_master(job_id)
 
 
+def _initialize_publish_attempt(job: dict, targets: list[dict], preparing_ids: Optional[set[str]] = None) -> None:
+    """Publish a queued/in-progress snapshot before the API response returns.
+
+    The UI begins polling immediately after POST /publish. Marking the job as
+    publishing synchronously prevents the first GET from seeing the previous
+    completed montage state and stopping the poll timer before the background
+    worker has started.
+    """
+    preparing_ids = preparing_ids or set()
+    job["status"] = "publishing"
+    job["stage"] = "publishing"
+    job["detail"] = "Подготовка файлов к публикации..." if preparing_ids else "Публикация..."
+    job["error"] = None
+    job["publish"] = dict(job.get("publish") or {})
+    job["publish_status"] = dict(job.get("publish_status") or {})
+    job["publish_started"] = dict(job.get("publish_started") or {})
+    job["publish_unknown"] = dict(job.get("publish_unknown") or {})
+    job["publish_errors"] = dict(job.get("publish_errors") or {})
+    progress = {}
+    for target in targets:
+        target_id = str(target.get("id") or target.get("kind") or "")
+        if not target_id:
+            continue
+        job["publish_unknown"].pop(target_id, None)
+        job["publish_errors"].pop(target_id, None)
+        preparing = target_id in preparing_ids
+        progress[target_id] = {
+            "label": str(target.get("label") or target_id),
+            "progress": 0.0,
+            "status": "preparing" if preparing else "queued",
+            "detail": "Подготовка файла" if preparing else "Ожидание отправки",
+            "steps": [],
+        }
+    job["publish_progress"] = progress
+    job["last_publish_targets"] = targets
+    job["publish_tracking"] = True
+
+
 def _recover_publish_outcomes(job: dict) -> None:
     """Classify per-platform publish outcomes after an interrupted publish.
 
@@ -2949,7 +2987,10 @@ def _recover_publish_outcomes(job: dict) -> None:
                 item["progress"] = None
                 item["detail"] = unknown.get(tid) or item.get("detail") or "Результат неизвестен"
             else:
-                item["progress"] = 100
+                try:
+                    item["progress"] = min(99.0, max(0.0, float(item.get("progress") or 0)))
+                except (TypeError, ValueError):
+                    item["progress"] = 0
                 item["detail"] = errors.get(tid) or item.get("detail") or "Публикация не выполнена"
     job["publish_status"] = statuses
     job["publish_errors"] = errors
@@ -3566,30 +3607,7 @@ async def process_publish(job_id: str, targets: list, publish_lock: Optional[asy
     loop = asyncio.get_running_loop()
     try:
         previous_publish = dict(job.get("publish") or {})
-        job["status"] = "publishing"
-        job["error"] = None
-        job["publish"] = dict(previous_publish)
-        job["publish_status"] = dict(job.get("publish_status") or {})
-        job["publish_started"] = dict(job.get("publish_started") or {})
-        job["publish_unknown"] = dict(job.get("publish_unknown") or {})
-        job["publish_errors"] = dict(job.get("publish_errors") or {})
-        job["publish_tracking"] = True
-        for target in targets:
-            target_id = str(target.get("id") or target.get("kind") or "")
-            if target_id:
-                job["publish_unknown"].pop(target_id, None)
-                job["publish_errors"].pop(target_id, None)
-        job["publish_progress"] = {
-            str(target["id"]): {
-                "label": str(target.get("label") or target["id"]),
-                "progress": 0,
-                "status": "queued",
-                "detail": "В очереди",
-                "steps": [],
-            }
-            for target in targets
-        }
-        job["last_publish_targets"] = targets
+        _initialize_publish_attempt(job, targets)
         _save_montage_job(job_id)
         progress = _threaded_progress(loop, job_id)
         workdir = MONTAGE_WORK / job_id
@@ -3647,8 +3665,17 @@ async def process_publish(job_id: str, targets: list, publish_lock: Optional[asy
                 if item is None:
                     return
                 previous = item.get("status")
+                if status == "unknown":
+                    safe_percent = None
+                elif status == "done":
+                    safe_percent = 100.0
+                else:
+                    try:
+                        safe_percent = min(99.0, max(0.0, float(percent or 0)))
+                    except (TypeError, ValueError):
+                        safe_percent = 0.0
                 item.update(
-                    progress=None if status == "unknown" else round(percent, 1),
+                    progress=None if safe_percent is None else round(safe_percent, 1),
                     detail=detail, status=status,
                 )
                 if status == "done":
@@ -3751,7 +3778,11 @@ async def process_publish(job_id: str, targets: list, publish_lock: Optional[asy
             elif state == "unknown":
                 item.update(progress=None, detail=job["publish_unknown"].get(target_id) or "Результат публикации неизвестен")
             else:
-                item.update(progress=item.get("progress"), detail=item.get("detail")
+                try:
+                    failed_progress = min(99.0, max(0.0, float(item.get("progress") or 0)))
+                except (TypeError, ValueError):
+                    failed_progress = 0.0
+                item.update(progress=failed_progress, detail=item.get("detail")
                             or job["publish_errors"].get(target_id) or "Публикация не выполнена")
         current_errors = {k: v for k, v in job["publish_errors"].items() if k in expected_targets}
         current_unknown = {k: v for k, v in job["publish_unknown"].items() if k in expected_targets}
@@ -4820,7 +4851,7 @@ async def publish_montage(
     await lock.acquire()
     try:
         job["selected_cover_id"] = cover_id
-        job["last_publish_targets"] = targets
+        _initialize_publish_attempt(job, targets, preparing_ids=set(preparable_ids))
         _save_montage_job(job_id)
         _track_montage_task(
             job_id,

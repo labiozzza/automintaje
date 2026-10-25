@@ -623,6 +623,7 @@ def timeline_animation_layers(entries: list) -> tuple[list, list]:
     Base playback rate = fps of the first animation, so all of them run at
     the same speed by default; per-item ``speed`` (%) scales from it.  A
     single animation keeps its own fps at 100% (backward compatible).
+    Repeated animation ids are separate timeline instances with unique uids.
     Returns (layers, used_for_meta).
     """
     def _layer(entry: dict[str, Any], index: int, base_fps: float) -> dict[str, Any] | None:
@@ -654,12 +655,11 @@ def timeline_animation_layers(entries: list) -> tuple[list, list]:
     base_fps = 10.0
     if valid:
         base_fps = _manifest_fps(str(valid[0]["id"]))
-    layers, used, seen = [], [], set()
+    layers, used = [], []
     for index, entry in enumerate(valid[:20]):
         layer = _layer(entry, index, base_fps)
-        if layer is None or layer["animation_id"] in seen:
+        if layer is None:
             continue
-        seen.add(layer["animation_id"])
         layers.append(layer)
         used.append({
             "id": layer["animation_id"], "start": layer["start"],
@@ -1609,6 +1609,7 @@ def render_montage(
         ]
     if used_animation:
         timeline_data["animation"] = used_animation
+        timeline_data["animations"] = used_animations
     if silence_trim_metadata.get("enabled"):
         timeline_data["silence_trim"] = silence_trim_metadata
 
@@ -2056,11 +2057,18 @@ def publish_job(
                 if cancelled:
                     raise MontageCancelled("Отменено пользователем")
             target_id = str(target.get("id") or target.get("kind") or f"target_{index}")
+            target_last_percent = 0.0
+            target_succeeded = False
 
             def target_progress(percent: float, stage: str, detail: str) -> None:
+                nonlocal target_last_percent
+                try:
+                    target_last_percent = max(target_last_percent, min(99.0, max(0.0, float(percent))))
+                except (TypeError, ValueError):
+                    pass
                 if target_progress_cb:
-                    target_progress_cb(target_id, percent, detail, "publishing")
-                update_lane(name, (index + percent / 100) * 100 / count, stage, detail)
+                    target_progress_cb(target_id, target_last_percent, detail, "publishing")
+                update_lane(name, (index + target_last_percent / 100) * 100 / count, stage, detail)
 
             def target_step(step_key: str, step_label: str, status: str, detail: str) -> None:
                 if target_step_cb:
@@ -2083,15 +2091,22 @@ def publish_job(
                 lane_results.update(result["results"])
                 if confirmed_cb:
                     confirmed_cb(target_id, dict(result["results"][target_id]))
+                target_succeeded = True
                 if target_progress_cb:
                     target_progress_cb(target_id, 100, "Опубликовано", "done")
             except Exception as exc:
                 lane_errors[target_id] = str(exc)
                 if target_progress_cb:
                     outcome = "unknown" if str(exc).startswith("AMBIGUOUS_MEDIA_PUBLISH:") else "error"
-                    target_progress_cb(target_id, 100, str(exc), outcome)
+                    target_progress_cb(
+                        target_id,
+                        None if outcome == "unknown" else target_last_percent,
+                        str(exc), outcome,
+                    )
                 log_cb(f"publish target failed: {target_id}: {exc}")
-            update_lane(name, (index + 1) * 100 / count, target_id, f"Цель завершена: {target_id}")
+            completed_percent = 100.0 if target_succeeded else min(99.0, target_last_percent)
+            update_lane(name, (index + completed_percent / 100) * 100 / count,
+                        target_id, f"Цель завершена: {target_id}")
         return lane_results, lane_errors
 
     results: dict[str, Any] = {}
