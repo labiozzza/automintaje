@@ -376,6 +376,8 @@ def montage_plan(options: Dict[str, Any]) -> List[Stage]:
         stages.append(Stage("subtitles", "Создание субтитров", 20.0))
     if options.get("blur_banned_words"):
         stages.append(Stage("audio_censor", "Заглушение нежелательных слов", 3.0))
+    if options.get("silence_trim_enabled"):
+        stages.append(Stage("silence_trim", "Удаление отмеченных пауз", 5.0))
     stages.append(Stage("finalize", "Финальное кодирование", 22.0))
     stages.append(Stage("preview", "Создание версии для просмотра", 8.0))
     stages.append(Stage("verify", "Проверка и сохранение результата", 2.0))

@@ -753,6 +753,59 @@ select option { background: var(--surface2); }
 .overlay-inspector-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
 .overlay-inspector-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
 .overlay-position { margin-top:10px; color:var(--text2); font-size:12px; font-family:ui-monospace,monospace; }
+.silence-editor { margin-top:16px; padding-top:14px; border-top:1px solid var(--border); }
+.silence-editor [hidden] { display:none !important; }
+.silence-editor[hidden], .silence-settings[hidden] { display:none !important; }
+.silence-controls { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:10px 0; }
+.silence-controls .toggle-row { margin:0; }
+.silence-status { min-height:22px; color:var(--text2); font-size:13px; }
+.silence-status[data-state="analyzing"]::before { content:""; display:inline-block; width:10px; height:10px; margin:0 8px 0 2px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; vertical-align:-2px; animation:silence-spin .8s linear infinite; }
+@keyframes silence-spin { to { transform:rotate(360deg); } }
+.silence-status[data-state="error"], .silence-status[data-state="limit"] { color:#ffb3a9; }
+.silence-status[data-state="ready"] { color:var(--accent); }
+.silence-progress-row { display:flex; align-items:center; gap:10px; margin:6px 0 10px; }
+.silence-progress { flex:1; width:100%; height:10px; accent-color:var(--accent); }
+.silence-progress-label { min-width:42px; color:var(--text2); font-size:12px; font-variant-numeric:tabular-nums; text-align:right; }
+.silence-stats, .silence-duration-summary { display:flex; flex-wrap:wrap; gap:8px 18px; color:var(--text2); font-size:12px; }
+.silence-settings { margin:10px 0; padding:12px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); }
+.silence-settings-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+.silence-playback { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:12px 0 6px; }
+.silence-playback button[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
+.silence-track-viewport { overflow:auto hidden; border:1px solid var(--border); border-radius:8px; touch-action:pan-x; }
+.silence-track { position:relative; min-width:100%; height:58px; background:var(--surface2); cursor:crosshair; user-select:none; touch-action:pan-x; }
+.silence-track-retained { position:absolute; inset:0; background:linear-gradient(180deg,rgba(255,255,255,.025),transparent); pointer-events:none; }
+.silence-cut { position:absolute; top:8px; bottom:8px; min-width:2px; border:1px solid #ff8b7d; border-radius:4px; background:repeating-linear-gradient(135deg,rgba(228,84,75,.55) 0 4px,rgba(228,84,75,.2) 4px 8px); cursor:pointer; }
+.silence-cut.origin-edited { background:repeating-linear-gradient(45deg,rgba(228,84,75,.62) 0 3px,rgba(255,210,120,.25) 3px 6px); }
+.silence-cut.origin-manual { border:2px solid #f0c779; background:repeating-linear-gradient(90deg,rgba(240,199,121,.38) 0 3px,transparent 3px 7px); }
+.silence-cut.selected { outline:2px solid #fff; outline-offset:2px; z-index:3; }
+.silence-cut-label { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; overflow:hidden; color:#fff; font-size:10px; font-weight:700; text-shadow:0 1px 2px #000; white-space:nowrap; pointer-events:none; }
+.silence-handle { display:none; position:absolute; z-index:5; top:50%; width:44px; height:44px; margin-top:-22px; border:2px solid #fff; border-radius:6px; background:rgba(22,25,34,.96); touch-action:none; cursor:ew-resize; }
+.silence-cut.selected .silence-handle { display:block; }
+.silence-handle.start { left:0; transform:translateX(-50%); }
+.silence-handle.end { right:0; transform:translateX(50%); }
+.silence-cut.compact .silence-handle.start { left:50%; right:auto; transform:translateX(-100%); }
+.silence-cut.compact .silence-handle.end { left:50%; right:auto; transform:none; }
+.silence-handle:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+.silence-effective-tick { position:absolute; top:0; bottom:0; width:1px; border-left:1px dashed #fff; pointer-events:none; z-index:2; }
+.silence-track-playhead { position:absolute; z-index:4; top:0; bottom:0; width:2px; background:#fff; box-shadow:0 0 4px #000; pointer-events:none; }
+.silence-track-tick { position:absolute; z-index:1; top:0; bottom:0; width:1px; background:rgba(255,255,255,.18); pointer-events:none; }
+.silence-track-tick-label { position:absolute; top:1px; left:4px; color:var(--text2); font:10px ui-monospace,monospace; white-space:nowrap; }
+.silence-track-scale { display:flex; justify-content:space-between; margin:5px 2px 0; color:var(--text2); font:11px ui-monospace,monospace; }
+.silence-editor-lower { display:grid; grid-template-columns:minmax(200px,1fr) minmax(240px,1fr); gap:14px; margin-top:12px; }
+.silence-cut-list { display:flex; flex-direction:column; gap:5px; max-height:190px; overflow:auto; }
+.silence-cut-row { display:flex; align-items:center; gap:8px; width:100%; text-align:left; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-size:12px; }
+.silence-cut-row[aria-current="true"] { border-color:var(--accent); }
+.silence-inspector { min-height:88px; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); }
+.silence-inspector-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:8px; }
+.silence-inspector-grid input { width:100%; }
+.silence-empty { padding:10px; color:var(--text2); font-size:12px; }
+.silence-legend { display:flex; flex-wrap:wrap; gap:8px 14px; margin:8px 0; color:var(--text2); font-size:11px; }
+@media (max-width:700px) {
+  .silence-settings-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .silence-editor-lower { grid-template-columns:1fr; }
+  .silence-cut-list { max-height:150px; }
+}
+@media (prefers-reduced-motion: reduce) { .silence-status[data-state="analyzing"]::before { animation:none; border-top-color:var(--accent); } }
 .overlay-trash {
   position:absolute; left:50%; bottom:16px; z-index:20; display:flex; align-items:center; gap:8px;
   padding:10px 16px; color:#fff; background:rgba(15,17,24,.9); border:1px solid rgba(255,255,255,.25);
@@ -1148,6 +1201,73 @@ select option { background: var(--surface2); }
             <div class="sub-drag-layer">
               <div class="sub-drag-tip">Левая грань X <span id="projectPreviewSubX">0.12</span> • Y <span id="projectPreviewSubY">0.78</span> • Размер <span id="projectPreviewSubScale">1.00</span></div>
               <div class="sub-card" id="projectPreviewSubCard"><span class="sub-card-text" id="projectPreviewSubText"></span></div>
+            </div>
+          </div>
+          <div class="silence-editor" id="silenceEditor" hidden>
+            <div class="silence-controls">
+              <button type="button" class="btn" id="silenceAnalyzeBtn" onclick="analyzeSilence()">Анализировать тишину</button>
+              <button type="button" class="btn btn-small" id="silenceCancelAnalyzeBtn" onclick="cancelSilenceAnalysis()" hidden>Отменить анализ</button>
+              <button type="button" class="btn btn-small" id="silenceRecalculateBtn" onclick="recalculateSilenceCuts()" hidden>Пересчитать авторазрезы</button>
+              <button type="button" class="btn btn-small" id="silenceUndoBtn" onclick="undoSilenceEdit()" disabled>Отменить правку</button>
+              <label class="toggle-row" style="padding:6px 10px;border:1px solid var(--border);border-radius:8px">
+                <span><strong>Удалять отмеченные паузы</strong><br><span style="color:var(--text2);font-size:11px">Включает разрезы в рендер</span></span>
+                <input type="checkbox" id="silenceTrimEnabled" aria-label="Удалять отмеченные паузы">
+              </label>
+            </div>
+            <div class="silence-status" id="silenceStatus" data-state="idle" role="status" aria-live="polite">Анализ не запускался.</div>
+            <div class="silence-progress-row" id="silenceProgressRow" hidden>
+              <progress class="silence-progress" id="silenceProgress" max="100" aria-label="Прогресс анализа тишины"></progress>
+              <span class="silence-progress-label" id="silenceProgressLabel" aria-live="polite"></span>
+            </div>
+            <div class="silence-stats" id="silenceStats" hidden></div>
+            <details class="silence-settings" id="silenceSettings" hidden>
+              <summary>Настройки тишины</summary>
+              <div class="silence-settings-grid" style="margin-top:10px">
+                <label class="setting-group">Порог, dBFS
+                  <input type="number" id="silenceThreshold" min="-120" max="0" step="1" value="-42">
+                </label>
+                <label class="setting-group">Минимальная пауза, мс
+                  <input type="number" id="silenceMinMs" min="10" max="7200000" step="10" value="500">
+                </label>
+                <label class="setting-group">Оставить до паузы, мс
+                  <input type="number" id="silencePreMs" min="0" max="30000" step="10" value="120">
+                </label>
+                <label class="setting-group">Оставить после паузы, мс
+                  <input type="number" id="silencePostMs" min="0" max="30000" step="10" value="120">
+                </label>
+              </div>
+            </details>
+            <div class="silence-playback" aria-label="Режим предпросмотра разрезов">
+              <button type="button" class="btn btn-small" id="silenceModeSource" aria-pressed="true" onclick="setSilencePlaybackMode('source')">Исходник</button>
+              <button type="button" class="btn btn-small" id="silenceModeEdited" aria-pressed="false" onclick="setSilencePlaybackMode('edited')">С вырезанием</button>
+              <button type="button" class="btn btn-small" onclick="checkSilenceSeam()" id="silenceCheckSeamBtn" disabled>Проверить стык</button>
+              <button type="button" class="btn btn-small" onclick="fitSilenceTimeline()">Вписать</button>
+              <label style="font-size:11px;color:var(--text2)">Масштаб
+                <input type="range" id="silenceZoom" min="1" max="20" step="1" value="1" aria-label="Масштаб таймлайна">
+              </label>
+              <button type="button" class="btn btn-small" id="silenceAddCutBtn" onclick="startManualSilenceCut()">Добавить разрез</button>
+            </div>
+            <div id="silencePlaybackTimes" class="silence-stats" aria-live="polite">Исходник 00:00.00 · После разрезов 00:00.00</div>
+            <div class="silence-legend" aria-label="Обозначения разрезов">
+              <span>▧ авто</span><span>▨ изменён</span><span>▤ вручную</span>
+              <span>пунктирная метка — эффективная граница кадра</span>
+            </div>
+            <div class="silence-track-viewport" id="silenceTrackViewport">
+              <div class="silence-track" id="silenceTrack" role="group" aria-label="Разрезы тишины по времени исходного видео">
+                <div class="silence-track-retained" aria-hidden="true"></div>
+                <div class="silence-track-playhead" id="silenceTrackPlayhead" aria-hidden="true"></div>
+              </div>
+            </div>
+            <div class="silence-track-scale"><span id="silenceTrackZero">00:00.00</span><span id="silenceTrackEnd">00:00.00</span></div>
+            <div class="silence-duration-summary" id="silenceDurationSummary" aria-live="polite">Без изменений</div>
+            <div class="silence-editor-lower">
+              <div>
+                <strong style="font-size:12px">Разрезы по времени</strong>
+                <div class="silence-cut-list" id="silenceCutList"><div class="silence-empty">После анализа появятся интервалы.</div></div>
+              </div>
+              <div class="silence-inspector" id="silenceInspector" aria-live="polite">
+                <div class="silence-empty">Выберите разрез или добавьте его вручную.</div>
+              </div>
             </div>
           </div>
           <div class="timebar-scale">
@@ -1919,6 +2039,7 @@ function activateMontageJob(jobId) {
 function beginNewMontageInput() {
   montageInputDirty = true;
   clearMontageOutput(true);
+  resetSilenceEditor(true);
   montageUpdateProgress(0, 'idle', 'Настройте новый ролик', false);
 }
 
@@ -1960,6 +2081,7 @@ montageUploadZone.addEventListener('drop', e => {
 montageFileInput.addEventListener('change', () => { if (montageFileInput.files.length) setMontageVideo(montageFileInput.files[0]); });
 
 function setMontageVideo(file) {
+  const replacedSilenceSource = !!silenceAnalysisId || silenceCuts.length > 0;
   beginNewMontageInput();
   montageVideoFile = file;
   document.getElementById('montageFileName').textContent = file.name;
@@ -1972,11 +2094,954 @@ function setMontageVideo(file) {
   window.__montageObjectUrl = URL.createObjectURL(file);
   video.src = window.__montageObjectUrl;
   card.classList.add('active');
+  showSilenceEditor();
+  if (replacedSilenceSource) silenceSetStatus('Выбран другой источник. Старые разрезы очищены, запустите анализ снова.', 'source-changed');
   renderOverlayEditor();
   updateAnimationPreview();
   updateSubtitlePreviewStyle();
 }
 let montageVideoFile = null;
+
+let silenceAnalysis = null;
+let silenceAnalysisId = null;
+let silenceCuts = [];
+let silenceDismissed = new Set();
+let silenceSelectedCutId = null;
+let silenceUndo = null;
+let silenceController = null;
+let silenceRequestGeneration = 0;
+let silencePlaybackMode = 'source';
+let silencePreviewForceEdited = false;
+let silenceDrag = null;
+let silenceManualDrag = null;
+let silenceZoomFactor = 1;
+let silenceSeamRestoreMode = null;
+let silenceSettingsTimer = null;
+let silenceEditPlayheadMs = null;
+let silenceProgressTimer = null;
+let silenceWaitTimer = null;
+let silenceWaitUntil = 0;
+let silenceSessionReleasePromise = Promise.resolve();
+
+function newSilenceRequestId() {
+  return window.crypto && typeof window.crypto.randomUUID === 'function'
+    ? window.crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function clearSilenceProgressPolling() {
+  if (silenceProgressTimer) clearInterval(silenceProgressTimer);
+  silenceProgressTimer = null;
+}
+
+function clearSilenceWaitCountdown() {
+  if (silenceWaitTimer) clearInterval(silenceWaitTimer);
+  silenceWaitTimer = null;
+  silenceWaitUntil = 0;
+}
+
+function releaseSilenceSession(analysisId) {
+  if (!analysisId) return Promise.resolve();
+  silenceSessionReleasePromise = fetch(`/api/montage/silence/analyze/${encodeURIComponent(analysisId)}`, {
+    method:'DELETE', keepalive:true,
+  }).catch(() => null);
+  return silenceSessionReleasePromise;
+}
+
+function setSilenceProgress(percent, label, visible = true) {
+  const row = document.getElementById('silenceProgressRow');
+  const progress = document.getElementById('silenceProgress');
+  const text = document.getElementById('silenceProgressLabel');
+  row.hidden = !visible;
+  if (!visible) return;
+  if (Number.isFinite(percent)) {
+    progress.value = Math.max(0, Math.min(100, Number(percent)));
+    text.textContent = `${Math.round(progress.value)}%`;
+  } else {
+    progress.removeAttribute('value');
+    text.textContent = label || '…';
+  }
+}
+
+function formatSilenceWait(seconds) {
+  seconds = Math.max(0, Math.ceil(Number(seconds) || 0));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  return hours ? `${hours} ч ${minutes} мин` : minutes ? `${minutes} мин ${remainder} с` : `${remainder} с`;
+}
+
+function showSilenceCapacityWait(seconds) {
+  clearSilenceWaitCountdown();
+  silenceWaitUntil = Date.now() + Math.max(0, Number(seconds) || 0) * 1000;
+  const update = () => {
+    const remaining = Math.max(0, Math.ceil((silenceWaitUntil - Date.now()) / 1000));
+    if (!remaining) {
+      clearSilenceWaitCountdown();
+      silenceSetStatus('Срок ожидания истёк. Нажмите «Анализировать тишину», чтобы повторить.', 'limit');
+      setSilenceProgress(null, 'Ожидание завершено', false);
+      return;
+    }
+    silenceSetStatus(`Две сессии заняты. Ближайшая освободится примерно через ${formatSilenceWait(remaining)}; возможно раньше, если завершится рендер.`, 'limit');
+    setSilenceProgress(null, '', false);
+  };
+  update();
+  silenceWaitTimer = setInterval(update, 1000);
+}
+
+function startSilenceProgressPolling(requestId, signal, generation) {
+  clearSilenceProgressPolling();
+  let inFlight = false;
+  const poll = async () => {
+    if (inFlight || signal.aborted || generation !== silenceRequestGeneration) return;
+    inFlight = true;
+    try {
+      const response = await fetch(`/api/montage/silence/progress/${encodeURIComponent(requestId)}`, {signal});
+      if (!response.ok) return;
+      const state = await response.json();
+      if (generation !== silenceRequestGeneration) return;
+      if (state.status === 'capacity') {
+        clearSilenceProgressPolling();
+        showSilenceCapacityWait(state.wait_seconds);
+        return;
+      }
+      if (state.status === 'running') {
+        silenceSetStatus(state.detail || 'Анализируем аудио…', 'analyzing');
+        setSilenceProgress(Number.isFinite(state.percent) ? state.percent : null, state.detail || state.phase || '…');
+      } else if (state.status === 'ready') {
+        clearSilenceProgressPolling();
+        silenceSetStatus(state.detail || 'Анализ готов.', 'ready');
+        setSilenceProgress(100, 'Анализ готов');
+      } else if (state.status === 'error') {
+        clearSilenceProgressPolling();
+        silenceSetStatus(state.detail || 'Не удалось проанализировать аудио.', 'error');
+        setSilenceProgress(null, 'Ошибка', false);
+      }
+    } catch (error) {
+      if (error.name !== 'AbortError') { /* POST response remains the source of truth. */ }
+    } finally {
+      inFlight = false;
+    }
+  };
+  silenceProgressTimer = setTimeout(() => {
+    if (signal.aborted || generation !== silenceRequestGeneration) return;
+    poll();
+    silenceProgressTimer = setInterval(poll, 400);
+  }, 250);
+}
+
+function silenceDurationMs() {
+  const analyzed = Number(silenceAnalysis && silenceAnalysis.source_duration_ms);
+  if (analyzed > 0) return Math.round(analyzed);
+  const video = document.getElementById('projectPreviewVideo');
+  return Number.isFinite(video.duration) ? Math.max(0, Math.round(video.duration * 1000)) : 0;
+}
+
+function silenceFps() {
+  const raw = String((silenceAnalysis && silenceAnalysis.fps) || '30/1').split('/');
+  const num = Number(raw[0]) || 30;
+  const den = Number(raw[1]) || 1;
+  return num / den;
+}
+
+function silenceTimecode(ms) {
+  const centiseconds = Math.max(0, Math.round(Number(ms || 0) / 10));
+  const seconds = Math.floor(centiseconds / 100);
+  const minutes = Math.floor(seconds / 60);
+  const remSeconds = seconds % 60;
+  const cs = centiseconds % 100;
+  return `${String(minutes).padStart(2, '0')}:${String(remSeconds).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
+}
+
+function newSilenceCutId(prefix) {
+  const random = window.crypto && typeof window.crypto.randomUUID === 'function'
+    ? window.crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${random}`;
+}
+
+function silenceSetStatus(message, state = 'idle') {
+  const node = document.getElementById('silenceStatus');
+  if (!node) return;
+  node.textContent = message;
+  node.dataset.state = state;
+  node.setAttribute('aria-live', state === 'limit' ? 'off' : 'polite');
+}
+
+function showSilenceEditor() {
+  const editor = document.getElementById('silenceEditor');
+  if (!editor) return;
+  editor.hidden = false;
+  renderSilenceEditor();
+}
+
+function resetSilenceEditor(hide = false) {
+  silenceRequestGeneration++;
+  clearSilenceProgressPolling();
+  clearSilenceWaitCountdown();
+  if (silenceController) silenceController.abort();
+  silenceController = null;
+  if (silenceAnalysisId) releaseSilenceSession(silenceAnalysisId);
+  const analyzeButton = document.getElementById('silenceAnalyzeBtn');
+  const cancelButton = document.getElementById('silenceCancelAnalyzeBtn');
+  if (analyzeButton) analyzeButton.disabled = false;
+  if (cancelButton) cancelButton.hidden = true;
+  silenceAnalysis = null;
+  silenceAnalysisId = null;
+  silenceCuts = [];
+  silenceDismissed = new Set();
+  silenceSelectedCutId = null;
+  silenceUndo = null;
+  silencePlaybackMode = 'source';
+  silencePreviewForceEdited = false;
+  silenceDrag = null;
+  silenceManualDrag = null;
+  silenceZoomFactor = 1;
+  const zoom = document.getElementById('silenceZoom');
+  if (zoom) zoom.value = '1';
+  const undo = document.getElementById('silenceUndoBtn');
+  if (undo) undo.disabled = true;
+  const viewport = document.getElementById('silenceTrackViewport');
+  if (viewport) viewport.scrollLeft = 0;
+  const editor = document.getElementById('silenceEditor');
+  if (editor && hide) editor.hidden = true;
+  const status = document.getElementById('silenceStatus');
+  if (status) silenceSetStatus('Анализ не запускался.', 'idle');
+  const enabled = document.getElementById('silenceTrimEnabled');
+  if (enabled) enabled.checked = false;
+  const defaults = {silenceThreshold:'-42', silenceMinMs:'500', silencePreMs:'120', silencePostMs:'120'};
+  Object.entries(defaults).forEach(([id, value]) => {
+    const input = document.getElementById(id);
+    if (input) input.value = value;
+  });
+  const stats = document.getElementById('silenceStats');
+  if (stats) { stats.hidden = true; stats.textContent = ''; }
+  setSilenceProgress(null, '', false);
+  const settings = document.getElementById('silenceSettings');
+  if (settings) settings.hidden = true;
+  renderSilenceEditor();
+}
+
+function setSilenceAnalysisState(analysis, analysisId) {
+  clearSilenceProgressPolling();
+  clearSilenceWaitCountdown();
+  const preserved = silenceCuts.filter(c => c.origin === 'manual' || c.origin === 'edited');
+  const preservedDismissed = new Set(silenceDismissed);
+  silenceAnalysis = analysis;
+  silenceAnalysisId = analysisId || null;
+  silenceDismissed = preservedDismissed;
+  silenceCuts = preserved.concat(deriveSilenceCandidates()).sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms);
+  if (!silenceCuts.some(c => c.cut_id === silenceSelectedCutId)) silenceSelectedCutId = silenceCuts[0]?.cut_id || null;
+  const stats = document.getElementById('silenceStats');
+  if (stats) {
+    stats.hidden = false;
+    stats.innerHTML = analysis.audio_available
+      ? `<span>Средний RMS: <strong>${esc(analysis.mean_rms_dbfs)} dBFS</strong></span><span>Максимальный пик: <strong>${esc(analysis.max_peak_dbfs)} dBFS</strong></span><span>Аудио: ${silenceTimecode(analysis.audio_duration_ms)}</span><span>Источник: ${silenceTimecode(analysis.source_duration_ms)}</span>`
+      : '<span>Аудиодорожка не найдена. Авторазрезы недоступны; ручные разрезы работают.</span>';
+  }
+  document.getElementById('silenceSettings').hidden = !analysis.audio_available;
+  document.getElementById('silenceRecalculateBtn').hidden = !analysis.audio_available;
+  setSilenceProgress(100, 'Анализ готов');
+  document.getElementById('silenceCheckSeamBtn').disabled = silenceCuts.length === 0;
+  if (analysis.audio_available) {
+    silenceSetStatus(
+      silenceCuts.length
+        ? `Найдено пауз: ${silenceCuts.length}. Проверьте разрезы перед рендером.`
+        : 'По заданным условиям пауз не найдено. Измените настройки или добавьте разрез вручную.',
+      'ready'
+    );
+  } else {
+    silenceSetStatus('В видео нет аудиодорожки. Автоматические паузы недоступны; можно добавить разрез вручную.', 'no-audio');
+  }
+  renderSilenceEditor();
+}
+
+function deriveSilenceCandidates() {
+  if (!silenceAnalysis || !silenceAnalysis.audio_available) return [];
+  const envelope = silenceAnalysis.envelope_dbfs_x100 || [];
+  const threshold = Number(document.getElementById('silenceThreshold').value);
+  const minimum = Math.max(10, Math.round(Number(document.getElementById('silenceMinMs').value) / 10) * 10);
+  const before = Math.max(0, Math.round(Number(document.getElementById('silencePreMs').value) / 10) * 10);
+  const after = Math.max(0, Math.round(Number(document.getElementById('silencePostMs').value) / 10) * 10);
+  if (!Number.isFinite(threshold) || threshold < -120 || threshold > 0) return [];
+  const minimumBins = Math.max(1, Math.ceil(minimum / 10));
+  const duration = silenceDurationMs();
+  const candidates = [];
+  let start = -1;
+  for (let index = 0; index <= envelope.length; index++) {
+    const quiet = index < envelope.length && Number(envelope[index]) <= threshold * 100;
+    if (quiet && start < 0) start = index;
+    if ((!quiet || index === envelope.length) && start >= 0) {
+      const end = index;
+      if (end - start >= minimumBins) {
+        const id = `auto-${start}-${end}`;
+        if (!silenceDismissed.has(id)) {
+          let minimumLevel = 32767;
+          for (let bin = start; bin < end; bin++) minimumLevel = Math.min(minimumLevel, Number(envelope[bin]));
+          candidates.push({
+            cut_id: id,
+            start_ms: Math.max(0, start * 10 - before),
+            end_ms: Math.min(duration, end * 10 + after),
+            origin: 'auto',
+            detection_start_ms: start * 10,
+            detection_end_ms: end * 10,
+            level_dbfs: minimumLevel / 100,
+          });
+        }
+      }
+      start = -1;
+    }
+  }
+  return candidates.sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms);
+}
+
+function mergeSilenceCandidates(cuts) {
+  const ordered = (cuts || []).filter(c => c.end_ms > c.start_ms).sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms);
+  const merged = [];
+  ordered.forEach(cut => {
+    const last = merged[merged.length - 1];
+    if (!last || cut.start_ms > last.end_ms) {
+      merged.push({...cut});
+    } else {
+      last.end_ms = Math.max(last.end_ms, cut.end_ms);
+      last.member_cut_ids = Array.from(new Set([
+        ...(last.member_cut_ids || [last.cut_id]), ...(cut.member_cut_ids || [cut.cut_id]),
+      ]));
+      last.detection_end_ms = Math.max(last.detection_end_ms || last.end_ms, cut.detection_end_ms || cut.end_ms);
+      last.level_dbfs = Math.min(Number(last.level_dbfs ?? 0), Number(cut.level_dbfs ?? 0));
+    }
+  });
+  return merged;
+}
+
+function silenceUnion(cuts = silenceCuts) {
+  return mergeSilenceCandidates((cuts || []).map(c => ({
+    ...c,
+    detection_start_ms: c.start_ms,
+    detection_end_ms: c.end_ms,
+  })));
+}
+
+function saveSilenceUndo() {
+  const viewport = document.getElementById('silenceTrackViewport');
+  silenceUndo = {
+    cuts: JSON.parse(JSON.stringify(silenceCuts)),
+    dismissed: Array.from(silenceDismissed),
+    selected: silenceSelectedCutId,
+    scrollLeft: viewport ? viewport.scrollLeft : 0,
+  };
+  document.getElementById('silenceUndoBtn').disabled = false;
+}
+
+function undoSilenceEdit() {
+  if (!silenceUndo) return;
+  silenceCuts = JSON.parse(JSON.stringify(silenceUndo.cuts));
+  silenceDismissed = new Set(silenceUndo.dismissed || []);
+  silenceSelectedCutId = silenceUndo.selected;
+  const scrollLeft = silenceUndo.scrollLeft || 0;
+  silenceUndo = null;
+  document.getElementById('silenceUndoBtn').disabled = true;
+  renderSilenceEditor();
+  document.getElementById('silenceTrackViewport').scrollLeft = scrollLeft;
+}
+
+function recalculateSilenceCuts() {
+  if (!silenceAnalysis || !silenceAnalysis.audio_available) return;
+  if (!window.confirm('Авторазрезы и их правки будут пересчитаны. Ручные разрезы сохранятся. Продолжить?')) return;
+  const selected = selectedSilenceCut();
+  const anchor = selected ? (selected.start_ms + selected.end_ms) / 2 : 0;
+  saveSilenceUndo();
+  silenceDismissed = new Set();
+  silenceCuts = silenceCuts.filter(c => c.origin === 'manual').concat(deriveSilenceCandidates());
+  silenceCuts.sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms);
+  if (!silenceCuts.some(c => c.cut_id === silenceSelectedCutId)) selectNearestSilenceCut(anchor);
+  renderSilenceEditor();
+}
+
+function queueSilenceSettingsRefresh() {
+  if (!silenceAnalysis || !silenceAnalysis.audio_available) return;
+  clearTimeout(silenceSettingsTimer);
+  silenceSettingsTimer = setTimeout(() => {
+    const selected = selectedSilenceCut();
+    const anchor = selected ? (selected.start_ms + selected.end_ms) / 2 : 0;
+    saveSilenceUndo();
+    const preserved = silenceCuts.filter(c => c.origin !== 'auto');
+    silenceCuts = preserved.concat(deriveSilenceCandidates()).sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms);
+    if (!silenceCuts.some(c => c.cut_id === silenceSelectedCutId)) selectNearestSilenceCut(anchor);
+    renderSilenceEditor();
+    silenceSetStatus(`Настройки применены. Разрезов: ${silenceCuts.length}.`, 'ready');
+  }, 120);
+}
+
+function selectNearestSilenceCut(anchorMs) {
+  if (!silenceCuts.length) { silenceSelectedCutId = null; return; }
+  const nearest = silenceCuts.reduce((best, cut) => {
+    const distance = Math.abs((cut.start_ms + cut.end_ms) / 2 - anchorMs);
+    return !best || distance < best.distance ? {cut, distance} : best;
+  }, null);
+  silenceSelectedCutId = nearest.cut.cut_id;
+}
+
+function effectiveSilenceIntervals() {
+  const fps = silenceFps();
+  const duration = silenceDurationMs();
+  const frameMs = 1000 / fps;
+  return silenceUnion().map(c => {
+    const startFrame = Math.ceil(c.start_ms / frameMs - 1e-9);
+    const endFrame = Math.ceil(c.end_ms / frameMs - 1e-9);
+    return {...c, effective_start_ms: startFrame * frameMs, effective_end_ms: endFrame * frameMs};
+  }).filter(c => c.effective_end_ms > c.effective_start_ms && c.effective_start_ms < duration);
+}
+
+function silenceOutputTime(sourceMs) {
+  if (!document.getElementById('silenceTrimEnabled').checked && !silencePreviewForceEdited) return sourceMs;
+  const intervals = effectiveSilenceIntervals();
+  let removedBefore = 0;
+  for (const cut of intervals) {
+    if (sourceMs >= cut.effective_end_ms) {
+      removedBefore += cut.effective_end_ms - cut.effective_start_ms;
+      continue;
+    }
+    if (sourceMs >= cut.effective_start_ms) return Math.max(0, cut.effective_start_ms - removedBefore);
+    break;
+  }
+  return Math.max(0, sourceMs - removedBefore);
+}
+
+function updateSilencePlaybackTimes() {
+  const node = document.getElementById('silencePlaybackTimes');
+  if (!node) return;
+  const sourceMs = Math.max(0, (Number(document.getElementById('projectPreviewVideo').currentTime) || 0) * 1000);
+  node.textContent = `Исходник ${silenceTimecode(sourceMs)} · После разрезов ${silenceTimecode(silenceOutputTime(sourceMs))}`;
+}
+
+function updateSilenceDurationSummary() {
+  const summary = document.getElementById('silenceDurationSummary');
+  if (!summary) return;
+  const enabled = document.getElementById('silenceTrimEnabled').checked;
+  const duration = silenceDurationMs();
+  if (!enabled || !duration) {
+    summary.textContent = 'Без изменений';
+    return;
+  }
+  const effective = effectiveSilenceIntervals();
+  const removed = effective.reduce((sum, cut) => sum + cut.effective_end_ms - cut.effective_start_ms, 0);
+  summary.innerHTML = `<span>Исходник: <strong>${silenceTimecode(duration)}</strong></span><span>Удалится: <strong>${silenceTimecode(removed)}</strong></span><span>Останется ≈ <strong>${silenceTimecode(Math.max(0, duration - removed))}</strong></span>`;
+}
+
+function renderSilenceEditor() {
+  const editor = document.getElementById('silenceEditor');
+  if (!editor) return;
+  const duration = silenceDurationMs();
+  const viewport = document.getElementById('silenceTrackViewport');
+  const track = document.getElementById('silenceTrack');
+  const baseWidth = Math.max(320, viewport ? viewport.clientWidth : 320);
+  track.style.width = `${Math.round(baseWidth * silenceZoomFactor)}px`;
+  document.getElementById('silenceTrackZero').textContent = '00:00.00';
+  document.getElementById('silenceTrackEnd').textContent = silenceTimecode(duration);
+  const union = silenceUnion();
+  const selectedGroup = union.find(c => c.cut_id === silenceSelectedCutId || (c.member_cut_ids || []).includes(silenceSelectedCutId));
+  const selectedRaw = selectedSilenceCut();
+  const playhead = document.getElementById('silenceTrackPlayhead');
+  const video = document.getElementById('projectPreviewVideo');
+  playhead.style.left = `${duration ? Math.min(100, Math.max(0, video.currentTime * 1000 / duration * 100)) : 0}%`;
+  track.querySelectorAll('.silence-cut,.silence-effective-tick,.silence-track-tick').forEach(node => node.remove());
+  if (duration > 0) {
+    const tickCandidates = [1000,5000,10000,30000,60000,300000,600000,1800000,3600000];
+    const tickStep = tickCandidates.find(step => step >= duration / (8 * silenceZoomFactor)) || tickCandidates[tickCandidates.length - 1];
+    for (let tickMs = tickStep; tickMs < duration; tickMs += tickStep) {
+      const tick = document.createElement('span');
+      tick.className = 'silence-track-tick';
+      tick.style.left = `${tickMs / duration * 100}%`;
+      tick.innerHTML = `<span class="silence-track-tick-label">${silenceTimecode(tickMs)}</span>`;
+      track.appendChild(tick);
+    }
+    union.forEach(cut => {
+      const widthPct = Math.max(0.15, (cut.end_ms - cut.start_ms) / duration * 100);
+      const block = document.createElement('div');
+      const selectedBlock = cut.cut_id === silenceSelectedCutId || (cut.member_cut_ids || []).includes(silenceSelectedCutId);
+      const editingCut = selectedBlock ? selectedRaw : null;
+      const compact = editingCut && (editingCut.end_ms - editingCut.start_ms) / duration * track.clientWidth < 88;
+      block.className = `silence-cut origin-${cut.origin || 'auto'}${selectedBlock ? ' selected' : ''}${compact ? ' compact' : ''}`;
+      block.style.left = `${cut.start_ms / duration * 100}%`;
+      block.style.width = `${widthPct}%`;
+      block.dataset.cutId = cut.cut_id;
+      block.dataset.cutIds = (cut.member_cut_ids || [cut.cut_id]).join(',');
+      block.title = `${silenceTimecode(cut.start_ms)}–${silenceTimecode(cut.end_ms)} · ${cut.origin || 'auto'}`;
+      block.innerHTML = `<span class="silence-cut-label">${cut.origin === 'manual' ? 'вручную' : cut.origin === 'edited' ? 'изменён' : 'авто'} · ${silenceTimecode(cut.start_ms)}–${silenceTimecode(cut.end_ms)}</span>`;
+      if (selectedBlock) {
+        const range = Math.max(1, cut.end_ms - cut.start_ms);
+        const startPosition = Math.max(0, Math.min(100, ((editingCut?.start_ms ?? cut.start_ms) - cut.start_ms) / range * 100));
+        const endPosition = Math.max(0, Math.min(100, ((editingCut?.end_ms ?? cut.end_ms) - cut.start_ms) / range * 100));
+        const startStyle = compact ? 'left:50%;right:auto;transform:translateX(-100%)' : `left:${startPosition}%;right:auto;transform:translateX(-50%)`;
+        const endStyle = compact ? 'left:50%;right:auto;transform:none' : `left:${endPosition}%;right:auto;transform:translateX(-50%)`;
+        block.insertAdjacentHTML('beforeend', `<button class="silence-handle start" style="${startStyle}" role="slider" aria-valuemin="0" aria-valuemax="${duration}" data-boundary="start" aria-label="Начало разреза ${silenceTimecode(editingCut?.start_ms ?? cut.start_ms)}" aria-valuenow="${Math.round(editingCut?.start_ms ?? cut.start_ms)}" aria-valuetext="${silenceTimecode(editingCut?.start_ms ?? cut.start_ms)}"></button><button class="silence-handle end" style="${endStyle}" role="slider" aria-valuemin="0" aria-valuemax="${duration}" data-boundary="end" aria-label="Конец разреза ${silenceTimecode(editingCut?.end_ms ?? cut.end_ms)}" aria-valuenow="${Math.round(editingCut?.end_ms ?? cut.end_ms)}" aria-valuetext="${silenceTimecode(editingCut?.end_ms ?? cut.end_ms)}"></button>`);
+      }
+      block.addEventListener('click', event => {
+        if (event.target.closest('.silence-handle')) return;
+        event.stopPropagation();
+        silenceSelectedCutId = cut.cut_id;
+        renderSilenceEditor();
+      });
+      track.appendChild(block);
+      block.querySelectorAll('.silence-handle').forEach(bindSilenceHandle);
+      for (const requested of [cut.start_ms, cut.end_ms]) {
+        const effectiveTime = Math.ceil(requested * silenceFps() / 1000 - 1e-9) * 1000 / silenceFps();
+        const tick = document.createElement('span');
+        tick.className = 'silence-effective-tick';
+        tick.style.left = `${effectiveTime / duration * 100}%`;
+        tick.setAttribute('aria-hidden', 'true');
+        track.appendChild(tick);
+      }
+    });
+  }
+  renderSilenceCutList();
+  renderSilenceInspector(selectedRaw || selectedGroup);
+  updateSilenceDurationSummary();
+  updateSilencePlaybackTimes();
+  document.getElementById('silenceCheckSeamBtn').disabled = !selectedGroup || silenceCuts.length === 0;
+}
+
+function renderSilenceCutList() {
+  const list = document.getElementById('silenceCutList');
+  if (!silenceCuts.length) {
+    list.innerHTML = '<div class="silence-empty">Разрезов нет. Можно добавить вручную.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  silenceCuts.slice().sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms).forEach(cut => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'silence-cut-row';
+    button.setAttribute('aria-current', cut.cut_id === silenceSelectedCutId ? 'true' : 'false');
+    const origin = cut.origin === 'manual' ? 'вручную' : cut.origin === 'edited' ? 'изменён' : 'авто';
+    button.textContent = `${origin} · ${silenceTimecode(cut.start_ms)}–${silenceTimecode(cut.end_ms)}`;
+    button.addEventListener('click', () => {
+      silenceSelectedCutId = cut.cut_id;
+      renderSilenceEditor();
+      const block = Array.from(document.querySelectorAll('.silence-cut')).find(node =>
+        (node.dataset.cutIds || node.dataset.cutId || '').split(',').includes(cut.cut_id));
+      if (block) block.scrollIntoView({block:'nearest', inline:'nearest'});
+    });
+    list.appendChild(button);
+  });
+}
+
+function renderSilenceInspector(cut) {
+  const inspector = document.getElementById('silenceInspector');
+  if (!cut) {
+    inspector.innerHTML = '<div class="silence-empty">Выберите разрез или добавьте его вручную.</div>';
+    return;
+  }
+  const why = Number.isFinite(cut.level_dbfs)
+    ? `Уровень ${cut.level_dbfs.toFixed(2)} dBFS; тишина ${silenceTimecode((cut.detection_end_ms || cut.end_ms) - (cut.detection_start_ms || cut.start_ms))}.`
+    : 'Ручной разрез.';
+  const memberIds = new Set(cut.member_cut_ids || [cut.cut_id]);
+  const effective = effectiveSilenceIntervals().find(c => (c.member_cut_ids || [c.cut_id]).some(id => memberIds.has(id)));
+  const effectiveLabel = effective
+    ? `Эффективно: ${silenceTimecode(effective.effective_start_ms)}–${silenceTimecode(effective.effective_end_ms)}`
+    : 'Эффективная длина: 0 кадров';
+  const impact = effective ? `${silenceTimecode(effective.effective_end_ms - effective.effective_start_ms)} будет удалено` : 'Видеокадры не изменятся';
+  inspector.innerHTML = `<strong>${cut.origin === 'manual' ? 'Ручной разрез' : cut.origin === 'edited' ? 'Изменённый авторазрез' : 'Авторазрез'}</strong><div style="color:var(--text2);font-size:11px;margin-top:4px">Запрошено: ${silenceTimecode(cut.start_ms)}–${silenceTimecode(cut.end_ms)} · ${esc(effectiveLabel)}<br>${esc(impact)} · ${esc(why)}</div><div class="silence-inspector-grid"><label>Начало, мс<input type="number" id="silenceCutStart" min="0" max="${silenceDurationMs()}" step="10" value="${Math.round(cut.start_ms)}"></label><label>Конец, мс<input type="number" id="silenceCutEnd" min="${Math.round(cut.start_ms + 10)}" max="${silenceDurationMs()}" step="10" value="${Math.round(cut.end_ms)}"></label></div><div class="silence-controls"><button class="btn btn-small" type="button" onclick="applySilenceInspector()">Применить</button><button class="btn btn-small" type="button" onclick="deleteSelectedSilenceCut()">Удалить разрез</button></div>`;
+  const start = document.getElementById('silenceCutStart');
+  const end = document.getElementById('silenceCutEnd');
+  [start, end].forEach(input => input.addEventListener('keydown', event => {
+    if (event.key === 'Enter') applySilenceInspector();
+  }));
+}
+
+function applySilenceInspector() {
+  const cut = silenceCuts.find(c => c.cut_id === silenceSelectedCutId);
+  if (!cut) return;
+  const start = Number(document.getElementById('silenceCutStart').value);
+  const end = Number(document.getElementById('silenceCutEnd').value);
+  const duration = silenceDurationMs();
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || end > duration) {
+    silenceSetStatus('Введите целые миллисекунды в пределах длительности источника.', 'error');
+    return;
+  }
+  beginSilenceEdit();
+  saveSilenceUndo();
+  cut.start_ms = Math.round(start / 10) * 10;
+  cut.end_ms = Math.round(end / 10) * 10;
+  if (cut.end_ms <= cut.start_ms) cut.end_ms = cut.start_ms + 10;
+  if (cut.origin === 'auto') cut.origin = 'edited';
+  silenceCuts.sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms);
+  finishSilenceEdit();
+  renderSilenceEditor();
+}
+
+function startManualSilenceCut() {
+  const duration = silenceDurationMs();
+  if (!duration) {
+    silenceSetStatus('Длительность источника пока неизвестна. Дождитесь загрузки превью.', 'error');
+    return;
+  }
+  document.getElementById('silenceInspector').innerHTML = `<strong>Добавить ручной разрез</strong><div class="silence-inspector-grid"><label>Начало, мс<input type="number" id="silenceCutStart" min="0" max="${duration}" step="10" value="0"></label><label>Конец, мс<input type="number" id="silenceCutEnd" min="0" max="${duration}" step="10" value="${Math.min(duration, 500)}"></label></div><div class="silence-controls"><button class="btn btn-small" type="button" onclick="createManualSilenceCut()">Добавить</button></div>`;
+}
+
+function createManualSilenceCut() {
+  const start = Number(document.getElementById('silenceCutStart').value);
+  const end = Number(document.getElementById('silenceCutEnd').value);
+  const duration = silenceDurationMs();
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || end > duration) {
+    silenceSetStatus('Введите целые миллисекунды в пределах длительности источника.', 'error');
+    return;
+  }
+  if (silenceCuts.length >= 10000) {
+    silenceSetStatus('Достигнут предел в 10 000 разрезов.', 'limit');
+    return;
+  }
+  beginSilenceEdit();
+  saveSilenceUndo();
+  const cut = {cut_id:newSilenceCutId('manual'), start_ms:Math.floor(start / 10) * 10, end_ms:Math.ceil(end / 10) * 10, origin:'manual'};
+  silenceCuts.push(cut);
+  silenceCuts.sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms);
+  silenceSelectedCutId = cut.cut_id;
+  finishSilenceEdit();
+  renderSilenceEditor();
+}
+
+function deleteSelectedSilenceCut() {
+  const selected = silenceCuts.find(c => c.cut_id === silenceSelectedCutId);
+  if (!selected) return;
+  beginSilenceEdit();
+  saveSilenceUndo();
+  if (selected.origin === 'auto') silenceDismissed.add(selected.cut_id);
+  silenceCuts = silenceCuts.filter(c => c.cut_id !== selected.cut_id);
+  silenceSelectedCutId = silenceCuts[0]?.cut_id || null;
+  finishSilenceEdit();
+  renderSilenceEditor();
+}
+
+function setSilencePlaybackMode(mode, forceEdited = false) {
+  if (mode === 'edited' && !document.getElementById('silenceTrimEnabled').checked && !forceEdited) {
+    silencePlaybackMode = 'source';
+    silencePreviewForceEdited = false;
+    silenceSetStatus('Включите «Удалять отмеченные паузы», чтобы включить предпросмотр с вырезанием.', 'idle');
+  } else {
+    silencePlaybackMode = mode === 'edited' ? 'edited' : 'source';
+    silencePreviewForceEdited = Boolean(forceEdited && mode === 'edited');
+  }
+  document.getElementById('silenceModeSource').setAttribute('aria-pressed', String(silencePlaybackMode === 'source'));
+  document.getElementById('silenceModeEdited').setAttribute('aria-pressed', String(silencePlaybackMode === 'edited'));
+  if (silencePlaybackMode === 'edited') {
+    const video = document.getElementById('projectPreviewVideo');
+    const current = video.currentTime * 1000;
+    const cut = effectiveSilenceIntervals().find(item => current >= item.effective_start_ms && current < item.effective_end_ms);
+    if (cut) video.currentTime = cut.effective_end_ms / 1000;
+  }
+}
+
+function checkSilenceSeam() {
+  const cut = silenceCuts.find(c => c.cut_id === silenceSelectedCutId);
+  const video = document.getElementById('projectPreviewVideo');
+  if (!cut || !video) return;
+  silenceSeamRestoreMode = silencePlaybackMode;
+  setSilencePlaybackMode('edited', true);
+  video.currentTime = Math.max(0, cut.start_ms / 1000 - 1);
+  video.play().catch(() => {});
+  const stopAt = Math.min(silenceDurationMs() / 1000, cut.end_ms / 1000 + 1);
+  const stop = () => {
+    if (video.currentTime < stopAt) return;
+    video.pause();
+    video.removeEventListener('timeupdate', stop);
+    const restoreMode = silenceSeamRestoreMode || 'source';
+    silenceSeamRestoreMode = null;
+    setSilencePlaybackMode(restoreMode, restoreMode === 'edited' && document.getElementById('silenceTrimEnabled').checked);
+  };
+  video.addEventListener('timeupdate', stop);
+}
+
+function fitSilenceTimeline() {
+  silenceZoomFactor = 1;
+  const zoom = document.getElementById('silenceZoom');
+  if (zoom) zoom.value = '1';
+  renderSilenceEditor();
+  document.getElementById('silenceTrackViewport').scrollLeft = 0;
+}
+
+function silenceClientTime(clientX) {
+  const track = document.getElementById('silenceTrack');
+  const rect = track.getBoundingClientRect();
+  const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+  return Math.round((ratio * silenceDurationMs()) / 10) * 10;
+}
+
+function selectedSilenceCut() {
+  return silenceCuts.find(c => c.cut_id === silenceSelectedCutId) || null;
+}
+
+function beginSilenceEdit() {
+  const video = document.getElementById('projectPreviewVideo');
+  silenceEditPlayheadMs = Number.isFinite(video.currentTime) ? video.currentTime * 1000 : null;
+  if (!video.paused) video.pause();
+}
+
+function finishSilenceEdit() {
+  if (silenceEditPlayheadMs === null) return;
+  const video = document.getElementById('projectPreviewVideo');
+  const requested = silenceEditPlayheadMs;
+  silenceEditPlayheadMs = null;
+  const covering = effectiveSilenceIntervals().find(c => requested >= c.effective_start_ms && requested < c.effective_end_ms);
+  if (covering) {
+    const before = requested - covering.effective_start_ms;
+    const after = covering.effective_end_ms - requested;
+    video.currentTime = (before < after ? covering.effective_start_ms : covering.effective_end_ms) / 1000;
+  }
+}
+
+function clampSilenceBoundary(cut, boundary, timeMs) {
+  const ordered = silenceCuts.slice().sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms);
+  const index = ordered.findIndex(c => c.cut_id === cut.cut_id);
+  const previous = index > 0 ? ordered[index - 1] : null;
+  const next = index >= 0 && index + 1 < ordered.length ? ordered[index + 1] : null;
+  const duration = silenceDurationMs();
+  const minGap = Math.max(10, Math.ceil(1000 / silenceFps() / 10) * 10);
+  if (boundary === 'start') {
+    return Math.max(previous ? previous.end_ms : 0, Math.min(cut.end_ms - minGap, timeMs));
+  }
+  return Math.min(next ? next.start_ms : duration, Math.max(cut.start_ms + minGap, timeMs));
+}
+
+function bindSilenceHandle(handle) {
+  handle.addEventListener('pointerdown', event => {
+    const cut = selectedSilenceCut();
+    if (!cut) return;
+    event.preventDefault();
+    event.stopPropagation();
+    beginSilenceEdit();
+    saveSilenceUndo();
+    handle.setPointerCapture(event.pointerId);
+    silenceDrag = {cutId:cut.cut_id, boundary:handle.dataset.boundary, pointerId:event.pointerId, origin:cut.origin};
+  });
+  handle.addEventListener('pointermove', event => {
+    if (!silenceDrag || silenceDrag.pointerId !== event.pointerId) return;
+    const cut = selectedSilenceCut();
+    if (!cut) return;
+    const time = Math.round(silenceClientTime(event.clientX) / 10) * 10;
+    if (silenceDrag.boundary === 'start') cut.start_ms = clampSilenceBoundary(cut, 'start', time);
+    else cut.end_ms = clampSilenceBoundary(cut, 'end', time);
+    const block = document.querySelector(`.silence-cut[data-cut-id="${CSS.escape(cut.cut_id)}"]`);
+    const duration = silenceDurationMs();
+    if (block && duration) {
+      block.style.left = `${cut.start_ms / duration * 100}%`;
+      block.style.width = `${Math.max(0.15, (cut.end_ms - cut.start_ms) / duration * 100)}%`;
+    }
+    const startInput = document.getElementById('silenceCutStart');
+    const endInput = document.getElementById('silenceCutEnd');
+    if (startInput) startInput.value = Math.round(cut.start_ms);
+    if (endInput) endInput.value = Math.round(cut.end_ms);
+    updateSilenceDurationSummary();
+  });
+  const finish = event => {
+    if (!silenceDrag || silenceDrag.pointerId !== event.pointerId) return;
+    const cut = selectedSilenceCut();
+    if (cut && (cut.start_ms !== silenceUndo.cuts.find(c => c.cut_id === cut.cut_id)?.start_ms || cut.end_ms !== silenceUndo.cuts.find(c => c.cut_id === cut.cut_id)?.end_ms)) {
+      if (cut.origin === 'auto') cut.origin = 'edited';
+    }
+    silenceDrag = null;
+    finishSilenceEdit();
+    renderSilenceEditor();
+  };
+  handle.addEventListener('pointerup', finish);
+  handle.addEventListener('pointercancel', finish);
+  handle.addEventListener('keydown', event => {
+    const cut = selectedSilenceCut();
+    if (!cut || !['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+    event.preventDefault();
+    beginSilenceEdit();
+    saveSilenceUndo();
+    const boundary = handle.dataset.boundary;
+    const step = event.shiftKey ? 100 : 10;
+    let value = boundary === 'start' ? cut.start_ms : cut.end_ms;
+    if (event.key === 'ArrowLeft') value -= step;
+    if (event.key === 'ArrowRight') value += step;
+    if (event.key === 'Home') value = 0;
+    if (event.key === 'End') value = silenceDurationMs();
+    value = Math.round(value / 10) * 10;
+    if (boundary === 'start') cut.start_ms = clampSilenceBoundary(cut, 'start', value);
+    else cut.end_ms = clampSilenceBoundary(cut, 'end', value);
+    if (cut.origin === 'auto') cut.origin = 'edited';
+    finishSilenceEdit();
+    renderSilenceEditor();
+  });
+}
+
+async function analyzeSilence() {
+  if (!selectedProjectId && !montageVideoFile) {
+    silenceSetStatus('Сначала выберите видео или проект.', 'error');
+    return;
+  }
+  if (silenceController) silenceController.abort();
+  clearSilenceWaitCountdown();
+  const generation = ++silenceRequestGeneration;
+  const requestId = newSilenceRequestId();
+  silenceController = new AbortController();
+  document.getElementById('silenceAnalyzeBtn').disabled = true;
+  document.getElementById('silenceCancelAnalyzeBtn').hidden = false;
+  document.getElementById('silenceSettings').hidden = true;
+  document.getElementById('silenceStats').hidden = true;
+  const previousAnalysisId = silenceAnalysisId;
+  silenceAnalysisId = null;
+  if (previousAnalysisId) {
+    silenceSetStatus('Освобождаем предыдущую сессию анализа…', 'analyzing');
+    await releaseSilenceSession(previousAnalysisId);
+  } else {
+    await silenceSessionReleasePromise;
+  }
+  if (generation !== silenceRequestGeneration) return;
+  silenceSetStatus('Анализируем аудио…', 'analyzing');
+  setSilenceProgress(null, 'Подготовка анализа');
+  startSilenceProgressPolling(requestId, silenceController.signal, generation);
+  try {
+    let response;
+    if (selectedProjectId) {
+      response = await fetch('/api/montage/silence/analyze', {
+        method:'POST', headers:{'Content-Type':'application/json','X-Analysis-Request':requestId},
+        body:JSON.stringify({project_id:selectedProjectId}), signal:silenceController.signal,
+      });
+    } else {
+      response = await fetch('/api/montage/silence/analyze', {
+        method:'POST', headers:{'Content-Type':'application/octet-stream','X-Filename':encodeURIComponent(montageVideoFile.name),'X-Analysis-Request':requestId},
+        body:montageVideoFile, signal:silenceController.signal,
+      });
+    }
+    const data = await response.json();
+    if (generation !== silenceRequestGeneration) return;
+    if (!response.ok) {
+      clearSilenceProgressPolling();
+      if (silenceAnalysis) {
+        document.getElementById('silenceStats').hidden = false;
+        document.getElementById('silenceSettings').hidden = !silenceAnalysis.audio_available;
+      }
+      const messages = {
+        analysis_capacity:'Две сессии анализа заняты.',
+        analysis_resource_limit:'Декодер превысил лимит памяти. Выберите файл поменьше или с меньшим числом каналов.',
+        workspace_unavailable:'Недостаточно места на диске. Освободите место и повторите.',
+        unsupported_media:'Не удалось прочитать видео или аудиодорожку. Выберите другой файл.',
+        source_too_large:'Видео превышает допустимый размер или длительность.',
+      };
+      if (data.code === 'analysis_capacity') {
+        showSilenceCapacityWait(Number(data.context?.wait_seconds || response.headers.get('retry-after') || 60));
+      } else if (data.code === 'analysis_expired') {
+        setSilenceProgress(null, '', false);
+        silenceSetStatus('Сессия анализа истекла. Запустите анализ снова; ручные разрезы сохранены.', 'expired');
+      } else {
+        setSilenceProgress(null, '', false);
+        silenceSetStatus(messages[data.code] || data.detail || 'Не удалось проанализировать аудио.', 'error');
+      }
+      return;
+    }
+    setSilenceAnalysisState(data, data.analysis_id);
+  } catch (error) {
+    if (error.name !== 'AbortError' && generation === silenceRequestGeneration) {
+      clearSilenceProgressPolling();
+      setSilenceProgress(null, '', false);
+      if (silenceAnalysis) {
+        document.getElementById('silenceStats').hidden = false;
+        document.getElementById('silenceSettings').hidden = !silenceAnalysis.audio_available;
+      }
+      silenceSetStatus('Анализ прерван. Можно повторить попытку.', 'error');
+    }
+  } finally {
+    if (generation === silenceRequestGeneration) {
+      clearSilenceProgressPolling();
+      document.getElementById('silenceAnalyzeBtn').disabled = false;
+      document.getElementById('silenceCancelAnalyzeBtn').hidden = true;
+      silenceController = null;
+    }
+  }
+}
+
+function cancelSilenceAnalysis() {
+  silenceRequestGeneration++;
+  clearSilenceProgressPolling();
+  clearSilenceWaitCountdown();
+  if (silenceController) silenceController.abort();
+  silenceController = null;
+  document.getElementById('silenceAnalyzeBtn').disabled = false;
+  document.getElementById('silenceCancelAnalyzeBtn').hidden = true;
+  if (silenceAnalysis) {
+    document.getElementById('silenceStats').hidden = false;
+    document.getElementById('silenceSettings').hidden = !silenceAnalysis.audio_available;
+  }
+  setSilenceProgress(null, '', false);
+  silenceSetStatus('Анализ отменён. Ручные разрезы сохранены.', 'idle');
+}
+
+document.getElementById('silenceThreshold').addEventListener('input', queueSilenceSettingsRefresh);
+document.getElementById('silenceMinMs').addEventListener('input', queueSilenceSettingsRefresh);
+document.getElementById('silencePreMs').addEventListener('input', queueSilenceSettingsRefresh);
+document.getElementById('silencePostMs').addEventListener('input', queueSilenceSettingsRefresh);
+document.getElementById('silenceTrimEnabled').addEventListener('change', event => {
+  const effective = effectiveSilenceIntervals();
+  const duration = silenceDurationMs();
+  const removed = effective.reduce((sum, cut) => sum + cut.effective_end_ms - cut.effective_start_ms, 0);
+  if (event.target.checked && duration && removed >= duration) {
+    event.target.checked = false;
+    silenceSetStatus('Нельзя удалить всё видео. Оставьте хотя бы один кадр.', 'error');
+  }
+  if (!event.target.checked && silencePlaybackMode === 'edited' && !silencePreviewForceEdited) setSilencePlaybackMode('source');
+  renderSilenceEditor();
+});
+document.getElementById('silenceZoom').addEventListener('input', event => {
+  const viewport = document.getElementById('silenceTrackViewport');
+  const anchor = viewport.scrollLeft + viewport.clientWidth / 2;
+  const oldWidth = Math.max(1, document.getElementById('silenceTrack').scrollWidth);
+  silenceZoomFactor = Math.max(1, Math.min(20, Number(event.target.value) || 1));
+  renderSilenceEditor();
+  const newWidth = Math.max(1, document.getElementById('silenceTrack').scrollWidth);
+  viewport.scrollLeft = Math.max(0, anchor * newWidth / oldWidth - viewport.clientWidth / 2);
+});
+document.getElementById('silenceTrack').addEventListener('pointerdown', event => {
+  if (event.target.closest('.silence-cut')) return;
+  const track = document.getElementById('silenceTrack');
+  beginSilenceEdit();
+  track.setPointerCapture(event.pointerId);
+  silenceManualDrag = {pointerId:event.pointerId, startX:event.clientX, startMs:silenceClientTime(event.clientX)};
+});
+document.getElementById('silenceTrack').addEventListener('pointerup', event => {
+  if (!silenceManualDrag || silenceManualDrag.pointerId !== event.pointerId) return;
+  const drag = silenceManualDrag;
+  silenceManualDrag = null;
+  const endMs = silenceClientTime(event.clientX);
+  const frameMs = 1000 / silenceFps();
+  if (Math.abs(endMs - drag.startMs) >= Math.min(100, frameMs)) {
+    startManualSilenceCut();
+    const startInput = document.getElementById('silenceCutStart');
+    const endInput = document.getElementById('silenceCutEnd');
+    startInput.value = Math.floor(Math.min(endMs, drag.startMs) / 10) * 10;
+    endInput.value = Math.ceil(Math.max(endMs, drag.startMs) / 10) * 10;
+    createManualSilenceCut();
+  } else {
+    const video = document.getElementById('projectPreviewVideo');
+    video.currentTime = Math.max(0, Math.min(silenceDurationMs(), drag.startMs) / 1000);
+    silenceEditPlayheadMs = null;
+  }
+});
+document.getElementById('silenceTrack').addEventListener('pointercancel', event => {
+  if (silenceManualDrag && silenceManualDrag.pointerId === event.pointerId) {
+    silenceManualDrag = null;
+    finishSilenceEdit();
+  }
+});
+document.getElementById('projectPreviewVideo').addEventListener('timeupdate', () => {
+  const video = document.getElementById('projectPreviewVideo');
+  const now = video.currentTime * 1000;
+  if (silencePlaybackMode === 'edited' && (document.getElementById('silenceTrimEnabled').checked || silencePreviewForceEdited)) {
+    const cut = effectiveSilenceIntervals().find(item => now >= item.effective_start_ms && now < item.effective_end_ms);
+    if (cut) video.currentTime = cut.effective_end_ms / 1000;
+  }
+  const duration = silenceDurationMs();
+  const playhead = document.getElementById('silenceTrackPlayhead');
+  if (playhead && duration) playhead.style.left = `${Math.min(100, Math.max(0, now / duration * 100))}%`;
+  updateSilencePlaybackTimes();
+});
+document.getElementById('projectPreviewVideo').addEventListener('loadedmetadata', renderSilenceEditor);
+window.addEventListener('pagehide', () => {
+  if (silenceAnalysisId) releaseSilenceSession(silenceAnalysisId);
+});
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -2296,6 +3361,7 @@ async function openProjectPublish(projectId) {
 function selectProject(id, silent) {
   const p = projects.find(x => x.id === id);
   if (!p) return;
+  const replacedSilenceSource = !!silenceAnalysisId || silenceCuts.length > 0;
   if (!silent) beginNewMontageInput();
   selectedProjectId = id;
   montageVideoFile = null;
@@ -2305,11 +3371,15 @@ function selectProject(id, silent) {
   document.getElementById('montageProjectName').textContent = p.name;
   document.getElementById('montageStartBtn').disabled = p.transcript_status !== 'done';
   showProjectPreview(p);
+  showSilenceEditor();
+  if (replacedSilenceSource) silenceSetStatus('Выбран другой источник. Старые разрезы очищены, запустите анализ снова.', 'source-changed');
   if (!silent) refreshProjects();
 }
 
 function clearProject(skipRefresh = false) {
   selectedProjectId = null;
+  resetSilenceEditor(true);
+  document.getElementById('silenceEditor').hidden = true;
   document.getElementById('montageProjectSel').style.display = 'none';
   document.getElementById('montageStartBtn').disabled = !montageVideoFile;
   document.getElementById('projectPreviewCard').classList.remove('active');
@@ -3457,18 +4527,37 @@ async function startYouTubeReauth() {
 }
 
 async function startMontage() {
-  beginNewMontageInput();
+  montageInputDirty = true;
+  clearMontageOutput(true);
+  montageUpdateProgress(0, 'idle', 'Настройте новый ролик', false);
   document.getElementById('montageStartBtn').disabled = true;
   document.getElementById('montageErrorBox').classList.remove('active');
   document.getElementById('montageMontageErrorBox') && document.getElementById('montageMontageErrorBox').classList.remove('active');
   document.getElementById('montageResultsCard').classList.remove('active');
   const form = new FormData();
   let hasText = false;
+  const trimEnabled = document.getElementById('silenceTrimEnabled').checked;
+  const analysisId = silenceAnalysisId;
+  const cutSnapshot = JSON.stringify(silenceCuts.map(c => ({
+    cut_id:c.cut_id, start_ms:Math.round(c.start_ms), end_ms:Math.round(c.end_ms), origin:c.origin,
+  })));
+  form.append('silence_trim_enabled', String(trimEnabled));
+  if (trimEnabled) {
+    if (!analysisId || !silenceAnalysis || Date.now() >= Number(silenceAnalysis.expires_at_ms || 0)) {
+      silenceAnalysisId = null;
+      silenceSetStatus('Сессия анализа истекла. Запустите анализ снова; ручные разрезы сохранены.', 'expired');
+      montageError('Сессия анализа истекла. Запустите анализ снова.');
+      document.getElementById('montageStartBtn').disabled = false;
+      return;
+    }
+    form.append('silence_analysis_id', analysisId);
+    form.append('silence_cuts_json', cutSnapshot);
+  }
   if (selectedProjectId) {
-    form.append('project_id', selectedProjectId);
+    if (!trimEnabled) form.append('project_id', selectedProjectId);
     hasText = true;
   } else {
-    if (montageVideoFile) form.append('video', montageVideoFile);
+    if (!trimEnabled && montageVideoFile) form.append('video', montageVideoFile);
     const useTranscript = document.getElementById('montageUseTranscript').checked;
     const srtInput = document.getElementById('montageSrtInput');
     if (useTranscript && transcriptJobId) {
@@ -3557,10 +4646,27 @@ async function startMontage() {
   try {
     const res = await fetch('/api/montage/render', { method: 'POST', body: form });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'HTTP ' + res.status);
+    if (!res.ok) {
+      let errorMessage = data.detail || 'HTTP ' + res.status;
+      if (data.code === 'analysis_expired' || data.code === 'source_changed') {
+        if (data.code === 'source_changed' && analysisId) await releaseSilenceSession(analysisId);
+        silenceAnalysisId = null;
+        const recovery = data.code === 'source_changed'
+          ? 'Снимок исходника не совпал с данными анализа. Запустите анализ снова; ручные разрезы сохранены.'
+          : 'Сессия анализа истекла. Запустите анализ снова; ручные разрезы сохранены.';
+        errorMessage = recovery;
+        silenceSetStatus(recovery, data.code === 'analysis_expired' ? 'expired' : 'source-changed');
+        setSilenceProgress(null, '', false);
+      }
+      throw new Error(errorMessage);
+    }
     montageJobId = data.job_id;
     montageActive = true;
     montageInputDirty = false;
+    if (trimEnabled) {
+      silenceAnalysisId = null;
+      silenceSetStatus('Рендер запущен. Разрезы сохранены в задаче.', 'rendering');
+    }
     localStorage.setItem('montageJobId', montageJobId);
     connectMontageWs();
     startMontagePolling();

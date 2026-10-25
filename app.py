@@ -1,9 +1,11 @@
-import os, json, uuid, asyncio, subprocess, time, re, tempfile, hashlib, urllib.request, importlib, threading, gc, math, io, sys
+import os, json, uuid, asyncio, subprocess, time, re, tempfile, hashlib, urllib.request, importlib, threading, gc, math, io, sys, secrets
 import shutil
 import traceback
+import urllib.parse
 from pathlib import Path
 from typing import Optional, Any
 from datetime import datetime
+from fractions import Fraction
 
 from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, StreamingResponse
@@ -1008,9 +1010,494 @@ MONTAGE_WORK.mkdir(exist_ok=True)
 from montage.secrets_env import load_secrets_env
 load_secrets_env()
 from montage import engine as montage_engine
+from montage.silence_trim import (
+    BIN_MS as SILENCE_BIN_MS,
+    MAX_CHANNELS as SILENCE_MAX_CHANNELS,
+    MAX_CUTS as SILENCE_MAX_CUTS,
+    MAX_DURATION_SECONDS as SILENCE_MAX_DURATION_SECONDS,
+    PcmAccumulator,
+    ceil_fraction,
+    effective_frame_intervals,
+    normalize_cut_list,
+    parse_frame_rate,
+    retained_frame_segments,
+)
 from montage.color_pipeline import probe_color_profile
 from montage import cover_generator
 from montage.progress_tracker import failed_snapshot, ProgressTracker, Stage
+from montage.silence_trim import SAMPLE_RATE as SILENCE_SAMPLE_RATE
+
+SILENCE_ANALYSIS_BASE_DIR = MONTAGE_WORK / ".silence_analysis"
+SILENCE_PROCESS_NAMESPACE = f"{os.getpid()}-{uuid.uuid4().hex}"
+SILENCE_ANALYSIS_DIR = SILENCE_ANALYSIS_BASE_DIR / SILENCE_PROCESS_NAMESPACE
+SILENCE_ANALYSIS_TTL_SECONDS = 2 * 60 * 60
+SILENCE_SOURCE_MAX_BYTES = 2 * 1024 * 1024 * 1024
+SILENCE_ANALYSIS_MAX_SESSIONS = 2
+SILENCE_WORKSPACE_HEADROOM_BYTES = 128 * 1024 * 1024
+SILENCE_RESPONSE_MAX_BYTES = 8 * 1024 * 1024
+SILENCE_WORKER_MEMORY_LIMIT_BYTES = 64 * 1024 * 1024
+try:
+    _silence_timeout_env = int(os.environ.get("AUTOMONTAGE_SILENCE_ANALYSIS_TIMEOUT_SECONDS", "1800"))
+except (TypeError, ValueError):
+    _silence_timeout_env = 1800
+SILENCE_ANALYSIS_TIMEOUT_SECONDS = max(60, min(30 * 60, _silence_timeout_env))
+_SILENCE_SESSIONS: dict[str, dict[str, Any]] = {}
+_SILENCE_ANALYSIS_LOCK = asyncio.Lock()
+_SILENCE_PROCESSES: dict[str, asyncio.subprocess.Process] = {}
+_SILENCE_CLEANUP_TASK: Optional[asyncio.Task] = None
+_SILENCE_PROGRESS: dict[str, dict[str, Any]] = {}
+
+
+def _silence_request_id(request: Request) -> str:
+    raw = str(request.headers.get("x-analysis-request") or "").strip()
+    try:
+        return str(uuid.UUID(raw))
+    except (ValueError, AttributeError):
+        return uuid.uuid4().hex
+
+
+def _record_silence_progress(
+    request_id: str,
+    *,
+    status: str,
+    phase: str,
+    percent: Optional[float],
+    detail: str,
+    wait_seconds: Optional[int] = None,
+) -> None:
+    now = time.time()
+    for key, value in list(_SILENCE_PROGRESS.items()):
+        if now - float(value.get("updated_at", 0)) > SILENCE_ANALYSIS_TTL_SECONDS:
+            _SILENCE_PROGRESS.pop(key, None)
+    item = {
+        "request_id": request_id,
+        "status": status,
+        "phase": phase,
+        "percent": None if percent is None else max(0.0, min(100.0, float(percent))),
+        "detail": str(detail or ""),
+        "updated_at": now,
+    }
+    if wait_seconds is not None:
+        item["wait_seconds"] = max(0, int(wait_seconds))
+    _SILENCE_PROGRESS[request_id] = item
+
+
+def _silence_problem(
+    request: Request,
+    status: int,
+    code: str,
+    detail: str,
+    recovery: str,
+    *,
+    operation: str,
+    context: Optional[dict[str, Any]] = None,
+    side_effects: str = "none",
+    headers: Optional[dict[str, str]] = None,
+) -> JSONResponse:
+    """Return a safe RFC 9457 response for synchronous silence endpoints."""
+    request_progress_id = str(request.headers.get("x-analysis-request") or "").strip()
+    try:
+        request_progress_id = str(uuid.UUID(request_progress_id))
+    except (ValueError, AttributeError):
+        request_progress_id = ""
+    request_id = request_progress_id or uuid.uuid4().hex
+    if request_progress_id in _SILENCE_PROGRESS and _SILENCE_PROGRESS[request_progress_id].get("status") == "running":
+        _record_silence_progress(
+            request_progress_id, status="error", phase=operation, percent=None, detail=detail,
+        )
+    body = {
+        "type": f"urn:automontage:silence:{code}",
+        "title": code.replace("_", " ").title(),
+        "status": status,
+        "detail": detail,
+        "instance": request.url.path,
+        "code": code,
+        "operation": operation,
+        "context": context or {},
+        "recovery": recovery,
+        "side_effects": side_effects,
+        "request_id": request_id,
+    }
+    return JSONResponse(status_code=status, content=body, media_type="application/problem+json", headers=headers)
+
+
+def _silence_safe_filename(value: str) -> tuple[str, str]:
+    decoded = urllib.parse.unquote(str(value or "video.mp4"))
+    name = Path(decoded.replace("\\", "/")).name[:180] or "video.mp4"
+    ext = Path(name).suffix.lower()
+    if ext not in VIDEO_EXTS:
+        ext = ".mp4"
+        name = Path(name).stem[:160] + ext
+    return name, ext
+
+
+async def _expire_silence_sessions() -> None:
+    now = time.time()
+    async with _SILENCE_ANALYSIS_LOCK:
+        expired = [
+            analysis_id for analysis_id, session in _SILENCE_SESSIONS.items()
+            if float(session.get("expires_at", 0)) <= now
+        ]
+        for analysis_id in expired:
+            session = _SILENCE_SESSIONS.pop(analysis_id, None) or {}
+            shutil.rmtree(str(session.get("directory") or ""), ignore_errors=True)
+        SILENCE_ANALYSIS_BASE_DIR.mkdir(parents=True, exist_ok=True)
+        SILENCE_ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
+        live_dirs = {str(session.get("directory") or "") for session in _SILENCE_SESSIONS.values()}
+        for directory in SILENCE_ANALYSIS_DIR.iterdir():
+            if not directory.is_dir() or str(directory) in live_dirs:
+                continue
+            # Session metadata is intentionally in-memory; an orphan after
+            # restart cannot be resumed safely and must not accumulate.
+            shutil.rmtree(directory, ignore_errors=True)
+        if SILENCE_ANALYSIS_BASE_DIR.resolve() != SILENCE_ANALYSIS_DIR.resolve():
+            for worker_dir in SILENCE_ANALYSIS_BASE_DIR.iterdir():
+                if not worker_dir.is_dir() or worker_dir.resolve() == SILENCE_ANALYSIS_DIR.resolve():
+                    continue
+                try:
+                    owner_pid = int(worker_dir.name.split("-", 1)[0])
+                except ValueError:
+                    owner_pid = 0
+                owner_alive = False
+                if owner_pid > 0 and owner_pid != os.getpid():
+                    try:
+                        os.kill(owner_pid, 0)
+                        owner_alive = True
+                    except ProcessLookupError:
+                        owner_alive = False
+                    except PermissionError:
+                        owner_alive = True
+                if not owner_alive:
+                    # Old un-namespaced sessions and dead workers cannot be
+                    # resumed by this process and are safe to expire here.
+                    shutil.rmtree(worker_dir, ignore_errors=True)
+
+
+async def _reserve_silence_session(
+    filename: str, extension: str, project_id: Optional[str], request_id: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    await _expire_silence_sessions()
+    async with _SILENCE_ANALYSIS_LOCK:
+        if len(_SILENCE_SESSIONS) >= SILENCE_ANALYSIS_MAX_SESSIONS:
+            return None
+        analysis_id = secrets.token_urlsafe(32)
+        directory = SILENCE_ANALYSIS_DIR / uuid.uuid4().hex
+        directory.mkdir(parents=True, exist_ok=False)
+        session = {
+            "analysis_id": analysis_id,
+            "directory": str(directory),
+            "source_path": str(directory / ("source" + extension)),
+            "filename": filename,
+            "project_id": project_id,
+            "created_at": time.time(),
+            "expires_at": time.time() + SILENCE_ANALYSIS_TTL_SECONDS,
+            "status": "analyzing",
+            "request_id": request_id,
+        }
+        _SILENCE_SESSIONS[analysis_id] = session
+        return dict(session)
+
+
+async def _discard_silence_session(analysis_id: str) -> None:
+    async with _SILENCE_ANALYSIS_LOCK:
+        session = _SILENCE_SESSIONS.pop(analysis_id, None)
+    if session:
+        shutil.rmtree(str(session.get("directory") or ""), ignore_errors=True)
+
+
+def _free_space_for_silence_copy(bytes_needed: int) -> bool:
+    try:
+        return shutil.disk_usage(MONTAGE_WORK).free >= bytes_needed + SILENCE_WORKSPACE_HEADROOM_BYTES
+    except OSError:
+        return False
+
+
+def _copy_project_video_snapshot(source: Path, target: Path, progress_callback=None) -> tuple[int, str]:
+    source = source.resolve(strict=True)
+    if not source.is_file():
+        raise FileNotFoundError("project video unavailable")
+    before = source.stat()
+    if before.st_size > SILENCE_SOURCE_MAX_BYTES:
+        raise OverflowError("source too large")
+    if not _free_space_for_silence_copy(before.st_size):
+        raise OSError("workspace capacity")
+    digest = hashlib.sha256()
+    copied = 0
+    with source.open("rb") as input_file, target.open("xb") as output_file:
+        while True:
+            chunk = input_file.read(1024 * 1024)
+            if not chunk:
+                break
+            copied += len(chunk)
+            if copied > SILENCE_SOURCE_MAX_BYTES:
+                raise OverflowError("source too large")
+            digest.update(chunk)
+            output_file.write(chunk)
+            if progress_callback is not None:
+                progress_callback(copied, before.st_size)
+    after = source.stat()
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns) or copied != before.st_size:
+        raise RuntimeError("source changed during snapshot")
+    return copied, digest.hexdigest()
+
+
+async def _copy_raw_upload(request: Request, target: Path, request_id: str) -> tuple[int, str]:
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            announced = int(content_length)
+        except ValueError:
+            raise ValueError("invalid content length")
+        if announced > SILENCE_SOURCE_MAX_BYTES:
+            raise OverflowError("source too large")
+        if not _free_space_for_silence_copy(announced):
+            raise OSError("workspace capacity")
+    digest = hashlib.sha256()
+    total = 0
+    announced = int(content_length) if content_length else 0
+    _record_silence_progress(
+        request_id, status="running", phase="receiving", percent=0.0 if announced else None,
+        detail="Приём исходного видео",
+    )
+    with target.open("xb") as output_file:
+        async for chunk in request.stream():
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > SILENCE_SOURCE_MAX_BYTES:
+                raise OverflowError("source too large")
+            if not _free_space_for_silence_copy(len(chunk)):
+                raise OSError("workspace capacity")
+            digest.update(chunk)
+            output_file.write(chunk)
+            _record_silence_progress(
+                request_id, status="running", phase="receiving",
+                percent=(min(99.0, total * 100.0 / announced) if announced else None),
+                detail=(f"Загружено {total // (1024 * 1024)} МБ" if not announced else "Приём исходного видео"),
+            )
+    if total == 0:
+        raise ValueError("empty upload")
+    if content_length and total != int(content_length):
+        raise ValueError("incomplete upload")
+    return total, digest.hexdigest()
+
+
+def _probe_silence_source(path: Path) -> dict[str, Any]:
+    ffprobe = shutil.which("ffprobe") or "ffprobe"
+    result = subprocess.run(
+        [ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("source probe failed")
+    data = json.loads(result.stdout)
+    streams = data.get("streams") if isinstance(data.get("streams"), list) else []
+    video = next((item for item in streams if item.get("codec_type") == "video"), None)
+    if not isinstance(video, dict):
+        raise ValueError("no video stream")
+    audio = next((item for item in streams if item.get("codec_type") == "audio"), None)
+    raw_duration = (data.get("format") or {}).get("duration") or video.get("duration") or 0
+    duration = float(raw_duration)
+    if not math.isfinite(duration) or duration <= 0:
+        raise ValueError("invalid media duration")
+    if duration > SILENCE_MAX_DURATION_SECONDS:
+        raise OverflowError("source duration too long")
+    try:
+        frame_rate = parse_frame_rate(video.get("avg_frame_rate") or video.get("r_frame_rate"))
+        fps = f"{frame_rate.numerator}/{frame_rate.denominator}"
+    except ValueError:
+        fps = "30/1"
+    return {
+        "duration_ms": int(round(duration * 1000.0)),
+        "fps": fps,
+        "audio": audio,
+    }
+
+
+def _silence_worker_rss_bytes(pid: int) -> Optional[int]:
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(int(pid))],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=2,
+        )
+        value = int(result.stdout.strip()) if result.returncode == 0 and result.stdout.strip() else 0
+        return value * 1024 if value > 0 else None
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+async def _decode_silence_audio(
+    path: Path,
+    channels: int,
+    analysis_id: str,
+    *,
+    request_id: Optional[str] = None,
+    source_duration_ms: int = 0,
+) -> dict[str, Any]:
+    command = [
+        shutil.which("ffmpeg") or "ffmpeg", "-nostdin", "-v", "error",
+        "-threads", "1", "-filter_threads", "1", "-i", str(path),
+        "-map", "0:a:0", "-vn", "-c:a", "pcm_f32le", "-ar", str(SILENCE_SAMPLE_RATE),
+        "-f", "f32le", "pipe:1",
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    _SILENCE_PROCESSES[analysis_id] = process
+    accumulator = PcmAccumulator(channels)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + SILENCE_ANALYSIS_TIMEOUT_SECONDS
+    memory_limit_reached = asyncio.Event()
+    last_progress_update = 0.0
+
+    async def drain_stderr() -> bytes:
+        captured = bytearray()
+        while True:
+            chunk = await process.stderr.read(8192)
+            if not chunk:
+                return bytes(captured)
+            if len(captured) < 64 * 1024:
+                captured.extend(chunk[:64 * 1024 - len(captured)])
+
+    stderr_task = asyncio.create_task(drain_stderr())
+
+    async def monitor_worker_memory() -> None:
+        while process.returncode is None:
+            rss = await asyncio.to_thread(_silence_worker_rss_bytes, process.pid)
+            if rss is not None and rss > SILENCE_WORKER_MEMORY_LIMIT_BYTES:
+                memory_limit_reached.set()
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                return
+            await asyncio.sleep(0.5)
+
+    memory_task = asyncio.create_task(monitor_worker_memory())
+    try:
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError()
+            chunk = await asyncio.wait_for(process.stdout.read(64 * 1024), timeout=remaining)
+            if not chunk:
+                break
+            accumulator.feed(chunk)
+            if len(accumulator.envelope) > 720_000:
+                raise OverflowError("analysis envelope too large")
+            now = loop.time()
+            if request_id and now - last_progress_update >= 0.2:
+                decoded_ms = accumulator.total_samples * 1000.0 / (SILENCE_SAMPLE_RATE * channels)
+                percent = min(99.0, decoded_ms * 100.0 / source_duration_ms) if source_duration_ms > 0 else None
+                decoded_text = f"Обработано {decoded_ms / 1000.0:.1f} из {source_duration_ms / 1000.0:.1f} с" \
+                    if source_duration_ms > 0 else "Декодирование аудио"
+                _record_silence_progress(
+                    request_id, status="running", phase="decoding", percent=percent, detail=decoded_text,
+                )
+                last_progress_update = now
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise asyncio.TimeoutError()
+        code = await asyncio.wait_for(process.wait(), timeout=remaining)
+        stderr = await stderr_task
+        if memory_limit_reached.is_set():
+            raise MemoryError("audio decoder exceeded its memory budget")
+        if code != 0:
+            print(f"[silence-analysis] ffmpeg failed for request {analysis_id[:8]}: {stderr.decode('utf-8', errors='replace')[-500:]}", file=sys.stderr)
+            raise RuntimeError("audio decode failed")
+        result = accumulator.finish()
+        if len(result["envelope_dbfs_x100"]) > 720_000:
+            raise OverflowError("analysis envelope too large")
+        return result
+    except BaseException:
+        if process.returncode is None:
+            process.kill()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except Exception:
+                pass
+        if not stderr_task.done():
+            stderr_task.cancel()
+        raise
+    finally:
+        for task in (stderr_task, memory_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(stderr_task, memory_task, return_exceptions=True)
+        _SILENCE_PROCESSES.pop(analysis_id, None)
+
+
+async def _analysis_session(analysis_id: str) -> Optional[dict[str, Any]]:
+    await _expire_silence_sessions()
+    async with _SILENCE_ANALYSIS_LOCK:
+        session = _SILENCE_SESSIONS.get(str(analysis_id or ""))
+        if not session or session.get("status") != "ready":
+            return None
+        return dict(session)
+
+
+async def _silence_capacity_wait_seconds() -> int:
+    async with _SILENCE_ANALYSIS_LOCK:
+        expiries = [float(session.get("expires_at", 0)) for session in _SILENCE_SESSIONS.values()]
+    if not expiries:
+        return 1
+    return max(1, int(math.ceil(min(expiries) - time.time())))
+
+
+async def _handoff_silence_session(analysis_id: str, target_dir: Path) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    async with _SILENCE_ANALYSIS_LOCK:
+        session = _SILENCE_SESSIONS.get(str(analysis_id or ""))
+        if not session or session.get("status") != "ready" or float(session.get("expires_at", 0)) <= time.time():
+            return None, "analysis_expired"
+        source = Path(str(session.get("source_path") or ""))
+        if not source.is_file():
+            print(f"[silence-handoff] snapshot missing for session {str(analysis_id)[:8]}", file=sys.stderr)
+            return None, "snapshot_missing"
+        actual_hash = await asyncio.to_thread(_file_sha256, str(source))
+        expected_hash = str(session.get("source_sha256") or "")
+        if actual_hash != expected_hash:
+            print(
+                f"[silence-handoff] snapshot hash mismatch for session {str(analysis_id)[:8]} "
+                f"(expected {expected_hash[:12]}, got {actual_hash[:12]})",
+                file=sys.stderr,
+            )
+            return None, "snapshot_hash_mismatch"
+        target = target_dir / ("source" + source.suffix.lower())
+        os.replace(str(source), str(target))
+        handoff = dict(session)
+        handoff["source_path"] = str(target)
+        handoff["status"] = "consumed"
+        _SILENCE_SESSIONS.pop(str(analysis_id), None)
+        shutil.rmtree(str(session.get("directory") or ""), ignore_errors=True)
+        return handoff, None
+
+
+@app.on_event("startup")
+async def _cleanup_orphaned_silence_analysis_sessions() -> None:
+    """Analysis sessions are process-local; remove unresumable snapshots on restart."""
+    global _SILENCE_CLEANUP_TASK
+    await _expire_silence_sessions()
+    if _SILENCE_CLEANUP_TASK is None or _SILENCE_CLEANUP_TASK.done():
+        _SILENCE_CLEANUP_TASK = asyncio.create_task(_silence_cleanup_loop())
+
+
+async def _silence_cleanup_loop() -> None:
+    while True:
+        await asyncio.sleep(300)
+        await _expire_silence_sessions()
+
+
+@app.on_event("shutdown")
+async def _stop_silence_cleanup_loop() -> None:
+    global _SILENCE_CLEANUP_TASK
+    task = _SILENCE_CLEANUP_TASK
+    _SILENCE_CLEANUP_TASK = None
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 def _uploaded_video(job_id: str) -> Optional[Path]:
@@ -2619,8 +3106,23 @@ def _recover_montage_jobs() -> None:
                         # advertise it as completed without a real result (task 1).
                         job["status"] = "failed"
                         job["stage"] = "interrupted"
-                        job["detail"] = message
-                        job["error"] = message
+                        if bool((job.get("params") or {}).get("silence_trim_enabled")):
+                            job["detail"] = "Рендер прерван перезапуском. Исходник и разрезы сохранены в задаче."
+                            job["error"] = job["detail"]
+                            job["error_info"] = {
+                                "type": "urn:automontage:silence:render_failed",
+                                "title": "Render Interrupted",
+                                "detail": job["detail"],
+                                "code": "render_failed",
+                                "operation": "render",
+                                "context": {"stage": "interrupted", "cause": "ffmpeg_exit"},
+                                "recovery": "Проверьте задачу и повторите рендер один раз.",
+                                "side_effects": "partial",
+                                "request_id": uuid.uuid4().hex,
+                            }
+                        else:
+                            job["detail"] = message
+                            job["error"] = message
                         try:
                             job["progress"] = min(float(job.get("progress") or 0), 99.0)
                         except (TypeError, ValueError):
@@ -2894,19 +3396,52 @@ async def process_montage(job_id: str, params: dict):
             print(f"[montage] job {job_id} cancelled by user", file=sys.stderr)
             await broadcast_progress(job_id, job.get("progress", 0), "cancelled", "Отменено пользователем")
             return
+        failure_stage = str(job.get("stage") or "render")
         job["status"] = "error"
         job["phase"] = "failed"
-        job["error"] = str(e)
         job["stage"] = "error"
-        job["detail"] = str(e)
-        operation = mark_operation_failed(job_id, str(e))
+        if bool(params.get("silence_trim_enabled")):
+            error_detail = "Монтаж не выполнен. Исходник и разрезы сохранены в задаче для проверки и повтора."
+            job["error"] = error_detail
+            job["detail"] = error_detail
+            cause = (
+                "media_read_failed" if failure_stage == "prepare"
+                else "workspace_capacity" if "disk" in str(e).lower() or "space" in str(e).lower()
+                else "ffmpeg_exit" if failure_stage in {"silence_trim", "finalize", "preview"}
+                else "render_stage_failed"
+            )
+            recovery = {
+                "media_read_failed": "Проверьте выбранный источник и повторите анализ.",
+                "workspace_capacity": "Освободите место на диске и повторите рендер один раз.",
+                "ffmpeg_exit": "Проверьте источник и свободное место; затем повторите рендер один раз.",
+                "render_stage_failed": "Проверьте указанный этап, настройки и журнал задачи; затем повторите один раз.",
+            }[cause]
+            job["error_info"] = {
+                "type": "urn:automontage:silence:render_failed",
+                "title": "Render Failed",
+                "detail": error_detail,
+                "code": "render_failed",
+                "operation": "render",
+                "context": {
+                    "stage": failure_stage,
+                    "cause": cause,
+                },
+                "recovery": recovery,
+                "side_effects": "partial",
+                "request_id": uuid.uuid4().hex,
+            }
+        else:
+            job["error"] = str(e)
+            job["detail"] = str(e)
+            job.pop("error_info", None)
+        operation = mark_operation_failed(job_id, str(job["error"]))
         _save_montage_job(job_id)
         print(f"[montage] job {job_id} failed: {traceback.format_exc()}", file=sys.stderr)
         if operation is not None:
-            await broadcast_progress(job_id, operation.get("progress", 0), "error", str(e))
+            await broadcast_progress(job_id, operation.get("progress", 0), "error", str(job["error"]))
             await broadcast_operation(job_id, operation)
         else:
-            await broadcast_progress(job_id, 0, "error", str(e))
+            await broadcast_progress(job_id, 0, "error", str(job["error"]))
 
 
 async def _store_project_covers(job_id: str) -> None:
@@ -3399,8 +3934,369 @@ async def download_comfortaa_font():
     return {"font": {"id": target.name, "name": "Comfortaa", "path": str(target)}}
 
 
+@app.get("/api/montage/silence/progress/{request_id}")
+async def montage_silence_progress(request_id: str):
+    try:
+        request_id = str(uuid.UUID(request_id))
+    except (ValueError, AttributeError):
+        raise HTTPException(404, "Analysis progress not found")
+    progress = _SILENCE_PROGRESS.get(request_id)
+    if not progress or time.time() - float(progress.get("updated_at", 0)) > SILENCE_ANALYSIS_TTL_SECONDS:
+        _SILENCE_PROGRESS.pop(request_id, None)
+        raise HTTPException(404, "Analysis progress not found")
+    return {
+        "request_id": request_id,
+        "status": progress.get("status"),
+        "phase": progress.get("phase"),
+        "percent": progress.get("percent"),
+        "detail": progress.get("detail"),
+        "wait_seconds": progress.get("wait_seconds"),
+    }
+
+
+@app.delete("/api/montage/silence/analyze/{analysis_id}")
+async def release_montage_silence_analysis(analysis_id: str, request: Request):
+    async with _SILENCE_ANALYSIS_LOCK:
+        session = _SILENCE_SESSIONS.get(str(analysis_id or ""))
+        if not session:
+            return {"released": False}
+        if session.get("status") != "ready":
+            return {"released": False, "status": str(session.get("status") or "unknown")}
+        _SILENCE_SESSIONS.pop(str(analysis_id), None)
+    shutil.rmtree(str(session.get("directory") or ""), ignore_errors=True)
+    _record_silence_progress(
+        str(session.get("request_id") or ""), status="released", phase="released",
+        percent=None, detail="Сессия анализа освобождена",
+    ) if session.get("request_id") else None
+    return {"released": True}
+
+
+@app.post("/api/montage/silence/analyze")
+async def analyze_montage_silence(request: Request):
+    """Create an immutable analysis session from a streamed upload or project id."""
+    await _expire_silence_sessions()
+    request_id = _silence_request_id(request)
+    _record_silence_progress(
+        request_id, status="running", phase="resolving", percent=None,
+        detail="Проверка выбранного источника",
+    )
+    content_type = str(request.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    project_id: Optional[str] = None
+    if content_type == "application/json":
+        length_header = request.headers.get("content-length")
+        if length_header:
+            try:
+                if int(length_header) > 64 * 1024:
+                    return _silence_problem(
+                        request, 413, "source_too_large", "Project analysis request is too large.",
+                        "Send only a project_id and retry.", operation="analysis_request",
+                        context={"max_request_bytes": 64 * 1024},
+                    )
+            except ValueError:
+                return _silence_problem(
+                    request, 400, "invalid_request", "Invalid content length.",
+                    "Retry with a valid project request.", operation="analysis_request",
+                )
+        raw_body = bytearray()
+        try:
+            async for chunk in request.stream():
+                if len(raw_body) + len(chunk) > 64 * 1024:
+                    return _silence_problem(
+                        request, 413, "source_too_large", "Project analysis request is too large.",
+                        "Send only a project_id and retry.", operation="analysis_request",
+                        context={"max_request_bytes": 64 * 1024},
+                    )
+                raw_body.extend(chunk)
+            body = json.loads(raw_body.decode("utf-8"))
+        except Exception:
+            body = None
+        project_id = str(body.get("project_id") or "") if isinstance(body, dict) else ""
+        if not project_id or len(project_id) > 160:
+            return _silence_problem(
+                request, 400, "invalid_request", "A valid project_id is required.",
+                "Select a saved project and retry.", operation="analysis_request",
+            )
+        async with PROJECTS_LOCK:
+            project = PROJECTS.get(project_id)
+        if not project:
+            return _silence_problem(
+                request, 404, "invalid_request", "The selected project was not found.",
+                "Select the project again.", operation="source_resolve", context={"project_id": project_id},
+            )
+        project_video = Path(str(project.get("video_path") or ""))
+        if not project_video.is_file():
+            return _silence_problem(
+                request, 409, "source_changed", "The project's video is unavailable.",
+                "Reselect the project and analyze it again.", operation="source_resolve",
+                context={"project_id": project_id},
+            )
+        try:
+            size = project_video.stat().st_size
+        except OSError:
+            size = 0
+        if size <= 0 or size > SILENCE_SOURCE_MAX_BYTES:
+            return _silence_problem(
+                request, 413, "source_too_large", "The project video is empty or exceeds the 2 GiB limit.",
+                "Choose a smaller source video.", operation="source_resolve",
+                context={"source_bytes": size, "max_source_bytes": SILENCE_SOURCE_MAX_BYTES},
+            )
+        filename, extension = _silence_safe_filename(project_video.name)
+    elif content_type == "application/octet-stream":
+        filename, extension = _silence_safe_filename(request.headers.get("x-filename") or "video.mp4")
+        project_video = None
+    else:
+        return _silence_problem(
+            request, 415, "invalid_request", "Use application/octet-stream for a video upload or application/json for a project id.",
+            "Retry with one supported source selector.", operation="analysis_request",
+            context={"supported_content_types": ["application/octet-stream", "application/json"]},
+        )
+
+    session = await _reserve_silence_session(filename, extension, project_id, request_id)
+    if session is None:
+        wait_seconds = await _silence_capacity_wait_seconds()
+        _record_silence_progress(
+            request_id, status="capacity", phase="capacity", percent=None,
+            detail="Ожидание свободной сессии анализа", wait_seconds=wait_seconds,
+        )
+        return _silence_problem(
+            request, 429, "analysis_capacity", "Two silence-analysis sessions are already active.",
+            "Wait for a session to expire or finish, then retry.", operation="session_reserve",
+            context={"active_limit": SILENCE_ANALYSIS_MAX_SESSIONS, "wait_seconds": wait_seconds,
+                     "next_expiry_ms": int((time.time() + wait_seconds) * 1000)},
+            headers={"Retry-After": str(wait_seconds)},
+        )
+    analysis_id = str(session["analysis_id"])
+    source_path = Path(str(session["source_path"]))
+    try:
+        try:
+            if project_id:
+                _record_silence_progress(
+                    request_id, status="running", phase="copying", percent=0.0,
+                    detail="Копирование снимка видео проекта",
+                )
+                source_bytes, source_hash = await asyncio.to_thread(
+                    _copy_project_video_snapshot,
+                    project_video,
+                    source_path,
+                    lambda copied, total: _record_silence_progress(
+                        request_id, status="running", phase="copying",
+                        percent=min(99.0, copied * 100.0 / max(1, total)),
+                        detail="Копирование снимка видео проекта",
+                    ),
+                )
+            else:
+                source_bytes, source_hash = await _copy_raw_upload(request, source_path, request_id)
+        except OverflowError:
+            await _discard_silence_session(analysis_id)
+            return _silence_problem(
+                request, 413, "source_too_large", "The source exceeds the 2 GiB upload limit.",
+                "Choose a smaller source video.", operation="source_copy",
+                context={"max_source_bytes": SILENCE_SOURCE_MAX_BYTES}, side_effects="partial",
+            )
+        except FileNotFoundError:
+            await _discard_silence_session(analysis_id)
+            return _silence_problem(
+                request, 409, "source_changed", "The project source disappeared during snapshot creation.",
+                "Reselect the project and analyze it again.", operation="source_copy", side_effects="partial",
+            )
+        except OSError as exc:
+            await _discard_silence_session(analysis_id)
+            code = "workspace_unavailable" if str(exc) == "workspace capacity" else "analysis_failed"
+            status = 507 if code == "workspace_unavailable" else 500
+            return _silence_problem(
+                request, status, code, "The source could not be copied into the analysis workspace.",
+                "Free disk space or choose another source, then retry.", operation="source_copy",
+                context={"cause": "workspace_capacity"}, side_effects="partial",
+            )
+        except ValueError as exc:
+            await _discard_silence_session(analysis_id)
+            detail = "The upload was empty or incomplete." if str(exc) in {"empty upload", "incomplete upload"} else "The request was invalid."
+            return _silence_problem(
+                request, 400, "invalid_request", detail, "Select the source again and retry.",
+                operation="source_copy", side_effects="partial",
+            )
+        except Exception as exc:
+            print(f"[silence-analysis] upload failed for request {analysis_id[:8]}: {type(exc).__name__}", file=sys.stderr)
+            await _discard_silence_session(analysis_id)
+            return _silence_problem(
+                request, 400, "invalid_request", "The upload did not complete.",
+                "Reselect the source and retry.", operation="source_copy",
+                context={"stage": "upload", "cause": "media_read_failed"}, side_effects="partial",
+            )
+        if not _free_space_for_silence_copy(0):
+            await _discard_silence_session(analysis_id)
+            return _silence_problem(
+                request, 507, "workspace_unavailable", "The workspace needs 128 MiB of free headroom.",
+                "Free disk space and retry.", operation="source_copy", context={"required_headroom_bytes": SILENCE_WORKSPACE_HEADROOM_BYTES},
+                side_effects="partial",
+            )
+
+        try:
+            _record_silence_progress(
+                request_id, status="running", phase="probing", percent=None,
+                detail="Проверка видео и аудиодорожки",
+            )
+            source_info = await asyncio.to_thread(_probe_silence_source, source_path)
+        except OverflowError:
+            await _discard_silence_session(analysis_id)
+            return _silence_problem(
+                request, 413, "source_too_large", "The media duration exceeds the two-hour limit.",
+                "Choose a shorter source video.", operation="source_probe",
+                context={"max_duration_seconds": SILENCE_MAX_DURATION_SECONDS}, side_effects="partial",
+            )
+        except ValueError as exc:
+            await _discard_silence_session(analysis_id)
+            detail = "The source has no video stream." if str(exc) == "no video stream" else "The source duration is invalid."
+            return _silence_problem(
+                request, 422, "unsupported_media", detail,
+                "Choose a readable video file and retry.", operation="source_probe", side_effects="partial",
+            )
+        except Exception as exc:
+            print(f"[silence-analysis] probe failed for request {analysis_id[:8]}: {type(exc).__name__}", file=sys.stderr)
+            await _discard_silence_session(analysis_id)
+            return _silence_problem(
+                request, 422, "unsupported_media", "The video could not be inspected.",
+                "Reselect or convert the source and retry.", operation="source_probe",
+                context={"stage": "probe", "cause": "media_read_failed"}, side_effects="partial",
+            )
+
+        audio = source_info.get("audio")
+        if not audio:
+            analysis = {
+                "audio_available": False,
+                "mean_rms_dbfs": None,
+                "max_peak_dbfs": None,
+                "envelope_dbfs_x100": [],
+                "sample_rate_hz": SILENCE_SAMPLE_RATE,
+                "channels": 0,
+                "audio_duration_ms": 0,
+            }
+        else:
+            try:
+                channels = int(audio.get("channels") or 0)
+            except (TypeError, ValueError):
+                channels = 0
+            if not 1 <= channels <= SILENCE_MAX_CHANNELS:
+                await _discard_silence_session(analysis_id)
+                return _silence_problem(
+                    request, 422, "unsupported_media", "Audio channel count is unsupported.",
+                    "Use a source with one to eight audio channels.", operation="audio_probe",
+                    context={"channels": channels, "max_channels": SILENCE_MAX_CHANNELS}, side_effects="partial",
+                )
+            try:
+                _record_silence_progress(
+                    request_id, status="running", phase="decoding", percent=0.0,
+                    detail="Декодирование аудио и расчёт уровней",
+                )
+                analysis = await _decode_silence_audio(
+                    source_path, channels, analysis_id,
+                    request_id=request_id, source_duration_ms=source_info["duration_ms"],
+                )
+            except asyncio.TimeoutError:
+                await _discard_silence_session(analysis_id)
+                return _silence_problem(
+                    request, 500, "analysis_failed", "Audio analysis exceeded its time limit.",
+                    "Check the source and retry once.", operation="audio_decode",
+                    context={"stage": "decode", "cause": "ffmpeg_timeout"}, side_effects="partial",
+                )
+            except OverflowError:
+                await _discard_silence_session(analysis_id)
+                return _silence_problem(
+                    request, 413, "source_too_large", "The source produces too many analysis bins.",
+                    "Choose a shorter source video.", operation="audio_decode",
+                    context={"max_bins": 720_000}, side_effects="partial",
+                )
+            except MemoryError:
+                await _discard_silence_session(analysis_id)
+                return _silence_problem(
+                    request, 413, "analysis_resource_limit", "The audio decoder exceeded its memory limit.",
+                    "Choose a smaller source or a source with fewer channels, then retry.", operation="audio_decode",
+                    context={"stage": "decode", "cause": "workspace_capacity",
+                             "max_worker_rss_bytes": SILENCE_WORKER_MEMORY_LIMIT_BYTES},
+                    side_effects="partial",
+                )
+            except Exception as exc:
+                print(f"[silence-analysis] decode failed for request {analysis_id[:8]}: {type(exc).__name__}", file=sys.stderr)
+                await _discard_silence_session(analysis_id)
+                return _silence_problem(
+                    request, 422, "unsupported_media", "The audio stream could not be decoded.",
+                    "Reselect or convert the source and retry.", operation="audio_decode",
+                    context={"stage": "decode", "cause": "unsupported_codec"}, side_effects="partial",
+                )
+            analysis["audio_available"] = True
+
+        if len(analysis.get("envelope_dbfs_x100") or []) > 720_000:
+            await _discard_silence_session(analysis_id)
+            return _silence_problem(
+                request, 413, "source_too_large", "The analysis envelope exceeds the supported limit.",
+                "Choose a shorter source video.", operation="response_build", context={"max_bins": 720_000},
+                side_effects="partial",
+            )
+        session_update = {
+            "status": "ready",
+            "source_bytes": source_bytes,
+            "source_sha256": source_hash,
+            "source_duration_ms": source_info["duration_ms"],
+            "fps": source_info["fps"],
+            "analysis": analysis,
+            "project_transcript_job_id": str((project or {}).get("transcript_job_id") or "") if project_id else "",
+            "source_name": str((project or {}).get("name") or filename) if project_id else filename,
+        }
+        async with _SILENCE_ANALYSIS_LOCK:
+            current = _SILENCE_SESSIONS.get(analysis_id)
+            if not current:
+                raise RuntimeError("analysis session expired")
+            current.update(session_update)
+        _record_silence_progress(
+            request_id, status="ready", phase="complete", percent=100.0,
+            detail="Анализ готов",
+        )
+
+        response_body = {
+            "analysis_id": analysis_id,
+            "request_id": request_id,
+            "source_filename": session_update["source_name"],
+            "source_duration_ms": source_info["duration_ms"],
+            "fps": source_info["fps"],
+            "audio_available": bool(analysis["audio_available"]),
+            "sample_rate_hz": SILENCE_SAMPLE_RATE,
+            "channels": analysis["channels"],
+            "bin_ms": SILENCE_BIN_MS,
+            "mean_rms_dbfs": analysis["mean_rms_dbfs"],
+            "max_peak_dbfs": analysis["max_peak_dbfs"],
+            "audio_duration_ms": analysis["audio_duration_ms"],
+            "envelope_dbfs_x100": analysis["envelope_dbfs_x100"],
+            "expires_at_ms": int(float(session["expires_at"]) * 1000),
+        }
+        response = JSONResponse(content=response_body)
+        if len(response.body) > SILENCE_RESPONSE_MAX_BYTES:
+            await _discard_silence_session(analysis_id)
+            return _silence_problem(
+                request, 413, "source_too_large", "The analysis response exceeds the 8 MiB limit.",
+                "Choose a shorter source video.", operation="response_build",
+                context={"max_response_bytes": SILENCE_RESPONSE_MAX_BYTES}, side_effects="partial",
+            )
+        return response
+    except asyncio.CancelledError:
+        _record_silence_progress(
+            request_id, status="cancelled", phase="cancelled", percent=None,
+            detail="Анализ отменён",
+        )
+        await _discard_silence_session(analysis_id)
+        raise
+    except Exception as exc:
+        _record_silence_progress(
+            request_id, status="error", phase="error", percent=None,
+            detail="Не удалось завершить анализ",
+        )
+        print(f"[silence-analysis] unexpected failure for request {request_id[:8]}: {type(exc).__name__}", file=sys.stderr)
+        await _discard_silence_session(analysis_id)
+        raise
+
+
 @app.post("/api/montage/render")
 async def start_montage(
+    request: Request,
     video: Optional[UploadFile] = File(None),
     srt: Optional[UploadFile] = File(None),
     overlay_files: list[UploadFile] = File(default=[]),
@@ -3436,7 +4332,65 @@ async def start_montage(
     cover_title: str = Form(""),
     zoom_timeline_json: Optional[str] = Form(None),
     prepare_mirrored: bool = Form(False),
+    silence_analysis_id: Optional[str] = Form(None),
+    silence_trim_enabled: bool = Form(False),
+    silence_cuts_json: str = Form("[]"),
 ):
+    silence_request = None
+    validated_silence_cuts: list[dict[str, Any]] = []
+    if silence_trim_enabled:
+        if not silence_analysis_id or video is not None or project_id:
+            return _silence_problem(
+                request, 400, "invalid_request",
+                "Trimmed renders require one analysis session and cannot include another video or project source.",
+                "Analyze the selected source, then submit only its analysis id with the cut list.",
+                operation="render_request",
+            )
+        try:
+            raw_cuts = json.loads(silence_cuts_json or "[]")
+        except (TypeError, json.JSONDecodeError):
+            raw_cuts = None
+        if not isinstance(raw_cuts, list):
+            return _silence_problem(
+                request, 422, "invalid_cut_list", "The cut list must be a JSON array.",
+                "Correct the cut list and retry.", operation="render_validation",
+            )
+        if len(raw_cuts) > SILENCE_MAX_CUTS:
+            return _silence_problem(
+                request, 422, "invalid_cut_list", "The cut list exceeds the 10,000 cut limit.",
+                "Reduce the number of cut ranges and retry.", operation="render_validation",
+                context={"cut_count": len(raw_cuts), "max_cuts": SILENCE_MAX_CUTS},
+            )
+        silence_request = await _analysis_session(silence_analysis_id)
+        if not silence_request:
+            return _silence_problem(
+                request, 410, "analysis_expired", "The analysis session expired or is no longer available.",
+                "Reanalyze the source and retry.", operation="session_lookup",
+            )
+        try:
+            validated_silence_cuts = raw_cuts
+            normalized = normalize_cut_list(raw_cuts, int(silence_request["source_duration_ms"]))
+            source_fps = parse_frame_rate(silence_request.get("fps") or "30/1")
+            total_frames = max(1, ceil_fraction(Fraction(
+                int(silence_request["source_duration_ms"]), 1000
+            ) * source_fps))
+            effective = effective_frame_intervals(
+                normalized, source_fps, int(silence_request["source_duration_ms"])
+            )
+            if effective:
+                retained_frame_segments(effective, total_frames)
+        except ValueError as exc:
+            return _silence_problem(
+                request, 422, "invalid_cut_list", "The cut list is invalid or removes the entire source.",
+                "Adjust the cut boundaries and retry.", operation="render_validation",
+                context={"cause": "invalid_cut_list"},
+            )
+    elif silence_analysis_id:
+        return _silence_problem(
+            request, 400, "invalid_request", "An analysis id requires trimming to be enabled.",
+            "Enable silence trimming or omit the analysis id.", operation="render_request",
+        )
+
     job_id = str(uuid.uuid4())[:8]
     ai_model = _normalize_ai_model(ai_model)
     work_dir = MONTAGE_WORK / job_id
@@ -3446,8 +4400,33 @@ async def start_montage(
     srt_text = ""
     src_job_id: Optional[str] = None
     existing_covers: list[dict] = []
+    original_name = "video.mp4"
+    analysis_handoff: Optional[dict[str, Any]] = None
 
-    if project_id:
+    if silence_trim_enabled:
+        analysis_handoff = silence_request
+        video_path = Path(str(silence_request["source_path"]))
+        original_name = str(silence_request.get("source_name") or silence_request.get("filename") or "video.mp4")
+        project_id = silence_request.get("project_id")
+        if project_id:
+            async with PROJECTS_LOCK:
+                project = PROJECTS.get(project_id)
+            if not project:
+                shutil.rmtree(work_dir, ignore_errors=True)
+                return _silence_problem(
+                    request, 409, "source_changed", "The analyzed project is no longer available.",
+                    "Reselect the project and analyze it again.", operation="session_handoff",
+                    context={"project_id": project_id}, side_effects="partial",
+                )
+            project_covers_dir = Path(str(project.get("covers_dir") or ""))
+            if project_covers_dir.is_dir() and project.get("covers"):
+                shutil.copytree(project_covers_dir, work_dir / "covers", dirs_exist_ok=True)
+                existing_covers = list(project.get("covers") or [])
+            src_job_id = project.get("transcript_job_id")
+            if src_job_id and jobs.get(src_job_id) and jobs[src_job_id].get("status") == "done" \
+                    and isinstance(jobs[src_job_id].get("result"), list):
+                srt_text = montage_engine.build_words_srt(jobs[src_job_id]["result"])
+    elif project_id:
         async with PROJECTS_LOCK:
             project = PROJECTS.get(project_id)
         if not project:
@@ -3471,13 +4450,12 @@ async def start_montage(
         video_path = work_dir / f"source{ext}"
         content = await video.read()
         video_path.write_bytes(content)
+        original_name = Path(video.filename or "video.mp4").name
 
     if video is not None and video.filename:
-        original_name = video.filename
+        original_name = Path(video.filename).name
     elif project_id:
-        original_name = PROJECTS.get(project_id, {}).get("name", "Проект")
-    else:
-        original_name = "video.mp4"
+        original_name = PROJECTS.get(project_id, {}).get("name", original_name or "Проект")
 
     if srt is not None and srt.filename:
         srt_text = (await srt.read()).decode("utf-8", errors="replace")
@@ -3592,6 +4570,23 @@ async def start_montage(
         ).is_file():
             raise HTTPException(400, "Выбранная анимация не найдена")
 
+    if silence_trim_enabled:
+        analysis_handoff, handoff_error = await _handoff_silence_session(silence_analysis_id or "", work_dir)
+        if handoff_error:
+            shutil.rmtree(work_dir, ignore_errors=True)
+            if handoff_error in {"snapshot_missing", "snapshot_hash_mismatch"}:
+                return _silence_problem(
+                    request, 409, "source_changed",
+                    "The immutable analysis snapshot is missing or its contents no longer match the analysis.",
+                    "Reanalyze the selected source; manual cuts are retained in the editor.",
+                    operation="session_handoff", context={"cause": handoff_error}, side_effects="none",
+                )
+            return _silence_problem(
+                request, 410, "analysis_expired", "The analysis session expired before render handoff.",
+                "Reanalyze the source and retry.", operation="session_handoff",
+            )
+        video_path = Path(str(analysis_handoff["source_path"]))
+
     jobs[job_id] = {
         "id": job_id,
         "original_name": original_name,
@@ -3609,6 +4604,7 @@ async def start_montage(
         "result": None,
         "publish": None,
         "error": None,
+        "error_info": None,
         "created_at": datetime.now().isoformat(),
         "covers": existing_covers,
         "cover_status": "done" if existing_covers else "idle",
@@ -3662,11 +4658,16 @@ async def start_montage(
             animation_offset_x, animation_item_size),
         "zoom_timeline_override": zoom_override,
         "prepare_mirrored": bool(prepare_mirrored),
+        "silence_trim_enabled": bool(silence_trim_enabled),
+        "silence_cuts": validated_silence_cuts if silence_trim_enabled else [],
+        "silence_source_duration_ms": int(analysis_handoff.get("source_duration_ms") or 0) if analysis_handoff else 0,
+        "silence_source_sha256": str(analysis_handoff.get("source_sha256") or "") if analysis_handoff else "",
+        "silence_target_fps": str(analysis_handoff.get("fps") or "") if analysis_handoff else "",
     }
     jobs[job_id]["params"] = params
     _save_montage_job(job_id)
-    if not project_id and video and video.filename:
-        name = video.filename
+    if not project_id and ((video and video.filename) or analysis_handoff):
+        name = original_name
         ext = Path(name).suffix.lower()
         if ext in VIDEO_EXTS and srt_text:
             async with PROJECTS_LOCK:
@@ -3974,6 +4975,7 @@ async def montage_result(job_id: str):
         "stage": job["stage"],
         "detail": job["detail"],
         "error": job.get("error"),
+        "error_info": job.get("error_info"),
         "result": job.get("result"),
         "publish": job.get("publish"),
         "publish_errors": job.get("publish_errors"),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -10,6 +11,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from fractions import Fraction
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -27,6 +29,15 @@ from .color_pipeline import (
 )
 from .progress_tracker import PENDING, ProgressTracker, montage_plan
 from .secrets_env import load_secrets_env, get_software_defaults, media_repo_dir
+from .silence_trim import (
+    build_concat_filter,
+    ceil_fraction,
+    effective_frame_intervals,
+    normalize_cut_list,
+    parse_frame_rate,
+    retained_frame_segments,
+    round_fraction,
+)
 
 MONAGE_DIR = Path(__file__).resolve().parent
 INSTAPOSTER_DIR = MONAGE_DIR / "instaposter"
@@ -702,6 +713,164 @@ def _resolve_master_export(raw_mode: str, final_mp4, workdir,
     return mode, master_video_name
 
 
+def _apply_silence_edl(
+    source: Path,
+    workdir: Path,
+    options: dict[str, Any],
+    *,
+    job_id: str,
+    duration: float,
+    progress_cb,
+    cancel_cb,
+    log_cb,
+) -> tuple[Path, dict[str, Any]]:
+    """Normalize the effected master to CFR and apply one audio/video EDL pass."""
+    if not bool(options.get("silence_trim_enabled")):
+        return source, {"enabled": False, "applied": False, "cuts": [], "timeline_segments": []}
+
+    raw_cuts = options.get("silence_cuts") or []
+    source_duration_ms = int(options.get("silence_source_duration_ms") or round(duration * 1000.0))
+    normalized = normalize_cut_list(raw_cuts, source_duration_ms)
+    if not normalized:
+        return source, {
+            "enabled": True, "applied": False, "reason": "empty_cut_list",
+            "requested_cut_count": 0, "removed_duration_ms": 0,
+            "source_duration_ms": source_duration_ms, "timeline_segments": [],
+        }
+
+    ffprobe = shutil.which("ffprobe") or "ffprobe"
+    probe_result = subprocess.run(
+        [ffprobe, "-v", "error", "-show_entries",
+         "format=duration:stream=codec_type,avg_frame_rate,r_frame_rate,start_time,duration,nb_frames,pix_fmt",
+         "-of", "json", str(source)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+    )
+    if probe_result.returncode != 0:
+        raise RuntimeError("Could not inspect the effected master before silence trimming")
+    probe_data = json.loads(probe_result.stdout)
+    streams = probe_data.get("streams") if isinstance(probe_data.get("streams"), list) else []
+    video = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
+    if not isinstance(video, dict):
+        raise RuntimeError("The effected master has no video stream")
+    audio = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
+    format_duration = float((probe_data.get("format") or {}).get("duration") or 0.0)
+    master_duration = float(video.get("duration") or format_duration or duration or 0.0)
+    if not math.isfinite(master_duration) or master_duration <= 0:
+        raise RuntimeError("The effected master has an invalid duration")
+    master_duration_ms = int(round(master_duration * 1000.0))
+    try:
+        fps = parse_frame_rate(video.get("avg_frame_rate") or video.get("r_frame_rate"))
+    except ValueError:
+        fps = Fraction(30, 1)
+    try:
+        nominal_fps = parse_frame_rate(video.get("r_frame_rate") or video.get("avg_frame_rate"))
+    except ValueError:
+        nominal_fps = fps
+    target_rate = str(options.get("silence_target_fps") or "").strip()
+    if target_rate:
+        fps = parse_frame_rate(target_rate)
+    normalize_cfr = fps != nominal_fps or (bool(target_rate) and fps != nominal_fps)
+    if not normalize_cfr:
+        try:
+            total_frames = int(video.get("nb_frames") or 0)
+        except (TypeError, ValueError):
+            total_frames = 0
+    else:
+        total_frames = 0
+    if total_frames <= 0:
+        # The fps filter emits frames whose PTS are strictly before the video
+        # end timestamp. Ceil(duration * fps) can invent a terminal frame when
+        # the container's format duration includes audio padding.
+        total_frames = max(1, int(math.floor(master_duration * float(fps) + 1e-6)))
+
+    # The output master must still cover every analyzed source-time edit. A
+    # shorter effected master is not silently clamped because that changes the
+    # user's timeline; report it as a render failure instead.
+    if abs(master_duration_ms - source_duration_ms) > max(100, ceil_fraction(Fraction(2000, 1) / fps)):
+        raise RuntimeError("The effected master duration differs from the analyzed source")
+    duration_for_edl = min(source_duration_ms, master_duration_ms)
+    normalized = normalize_cut_list(raw_cuts, duration_for_edl)
+    effective = effective_frame_intervals(normalized, fps, duration_for_edl)
+    if not effective:
+        return source, {
+            "enabled": True, "applied": False, "reason": "no_effective_frames",
+            "requested_cut_count": len(raw_cuts), "removed_duration_ms": 0,
+            "source_duration_ms": source_duration_ms, "master_fps": f"{fps.numerator}/{fps.denominator}",
+            "timeline_segments": [],
+            "ineffective_cut_ids": [cut.get("cut_id") for cut in raw_cuts if isinstance(cut, dict)],
+        }
+    retained = retained_frame_segments(effective, total_frames)
+    graph, graph_segments = build_concat_filter(
+        effective,
+        fps=fps,
+        total_frames=total_frames,
+        has_audio=bool(audio),
+        audio_start_offset_seconds=(
+            float(audio.get("start_time") or 0.0) - float(video.get("start_time") or 0.0)
+            if audio else 0.0
+        ),
+        normalize_cfr=normalize_cfr,
+    )
+    output = Path(workdir) / "silence_trimmed_master.mp4"
+    output.unlink(missing_ok=True)
+    pix_fmt = str(video.get("pix_fmt") or "yuv420p")
+    if pix_fmt not in {"yuv420p", "yuv422p", "yuv444p", "yuv420p10le", "yuv422p10le", "yuv444p10le"}:
+        pix_fmt = "yuv420p"
+    cmd = [
+        shutil.which("ffmpeg") or "ffmpeg", "-y", "-i", str(source),
+        "-filter_complex", graph, "-map", "[vout]",
+    ]
+    if audio:
+        cmd += ["-map", "[aout]"]
+    cmd += [
+        "-fps_mode:v", "passthrough",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", pix_fmt,
+    ] + encoder_color_args(probe_color_profile(source), "h264") + [
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
+    ]
+    log_cb("Применение отмеченных пауз к аудио и видео...")
+    code = run_ffmpeg_progress(
+        cmd, duration=master_duration, cwd=workdir,
+        log_path=Path(workdir) / "silence_trim.log",
+        on_progress=lambda percent: progress_cb(percent, "silence_trim", "Удаление отмеченных пауз"),
+        timeout=1800, job_id=job_id, cancel_cb=cancel_cb,
+    )
+    if code != 0 or not usable_video(output):
+        output.unlink(missing_ok=True)
+        raise RuntimeError("The silence cut render did not produce a usable video")
+
+    removed_frames = sum(item["end_frame"] - item["start_frame"] for item in effective)
+    removed_duration_ms = round_fraction(Fraction(removed_frames * 1000, 1) / fps)
+    timeline_segments = []
+    output_frame = 0
+    for start_frame, end_frame in retained:
+        segment_frames = end_frame - start_frame
+        timeline_segments.append({
+            "source_start_ms": round_fraction(Fraction(start_frame * 1000, 1) / fps),
+            "source_end_ms": round_fraction(Fraction(end_frame * 1000, 1) / fps),
+            "output_start_ms": round_fraction(Fraction(output_frame * 1000, 1) / fps),
+            "output_end_ms": round_fraction(Fraction((output_frame + segment_frames) * 1000, 1) / fps),
+        })
+        output_frame += segment_frames
+    metadata = {
+        "enabled": True,
+        "applied": True,
+        "requested_cut_count": len(raw_cuts),
+        "normalized_interval_count": len(normalized),
+        "removed_duration_ms": removed_duration_ms,
+        "source_duration_ms": source_duration_ms,
+        "master_duration_ms": master_duration_ms,
+        "output_duration_ms": round_fraction(Fraction(output_frame * 1000, 1) / fps),
+        "master_fps": f"{fps.numerator}/{fps.denominator}",
+        "master_cfr_normalized": normalize_cfr,
+        "requested_intervals": [dict(item) for item in raw_cuts],
+        "effective_intervals": effective,
+        "timeline_segments": timeline_segments,
+        "frame_segments": graph_segments,
+    }
+    return output, metadata
+
+
 def render_montage(
     *,
     job_id: str,
@@ -1309,6 +1478,29 @@ def render_montage(
     else:
         _skip("audio_censor", "Заглушение не требуется")
 
+    silence_trim_metadata = {"enabled": False, "applied": False, "cuts": [], "timeline_segments": []}
+    if bool(options.get("silence_trim_enabled")):
+        _start("silence_trim", "Удаление отмеченных пауз...")
+        final_mp4, silence_trim_metadata = _apply_silence_edl(
+            final_mp4,
+            workdir,
+            options,
+            job_id=job_id,
+            duration=_duration,
+            progress_cb=lambda percent, stage, detail: _upd(stage, percent, detail),
+            cancel_cb=cancel_cb,
+            log_cb=log_cb,
+        )
+        if silence_trim_metadata.get("applied"):
+            log_cb(
+                "Удалены паузы: "
+                f"{silence_trim_metadata.get('removed_duration_ms', 0)} мс; "
+                f"осталось {silence_trim_metadata.get('output_duration_ms', 0)} мс"
+            )
+            _done("silence_trim", "Отмеченные паузы удалены")
+        else:
+            _skip("silence_trim", "Эффективных для кадров разрезов нет; исходный путь сохранён")
+
     # ---- Master export source -------------------------------------------
     # Recording the master source adds no extra encode pass; see
     # ``_resolve_master_export`` for the mode fallback rules (unknown mode and
@@ -1417,6 +1609,8 @@ def render_montage(
         ]
     if used_animation:
         timeline_data["animation"] = used_animation
+    if silence_trim_metadata.get("enabled"):
+        timeline_data["silence_trim"] = silence_trim_metadata
 
     meta: dict[str, Any] = {
         "job_id": job_id,
@@ -1439,6 +1633,8 @@ def render_montage(
         "animations": list(animation_ids()),
         "timeline": timeline_data,
     }
+    if silence_trim_metadata.get("enabled"):
+        meta["silence_trim"] = silence_trim_metadata
     try:
         probe = ffprobe(Path(final_mp4))
         meta["duration"] = float(probe.get("format", {}).get("duration") or 0)
