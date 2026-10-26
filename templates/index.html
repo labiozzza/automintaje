@@ -132,6 +132,9 @@ h1 {
   background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
 }
 .publish-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.publication-queue-notice { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-top:12px; padding:12px; border:1px solid rgba(0,184,148,.4); border-radius:9px; background:rgba(0,184,148,.08); color:var(--green); font-size:13px; }
+.publication-queue-notice[hidden] { display:none; }
+.publication-queue-notice .btn { width:auto; padding:8px 12px; }
 .publish-live-progress { display: grid; gap: 9px; margin-top: 16px; }
 .publish-live-item { padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface2); }
 .publish-live-head { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; margin-bottom: 7px; }
@@ -1046,6 +1049,95 @@ input[type="file"]::file-selector-button:hover { border-color:var(--accent); }
   .dev-queue-trigger { transition:none; }
   .dev-queue-dialog[open] { animation:none; }
 }
+.publication-queue-trigger {
+  position:fixed; right:0; top:50%; z-index:900; transform:translateY(-50%);
+  display:flex; align-items:center; gap:8px; padding:14px 9px;
+  border:1px solid var(--border); border-right:0; border-radius:10px 0 0 10px;
+  background:var(--surface2); color:var(--text); box-shadow:0 6px 20px rgba(0,0,0,.28);
+  font-family:inherit; font-size:13px; font-weight:600; line-height:1.2;
+  writing-mode:vertical-rl; cursor:pointer; transition:background-color .18s ease,border-color .18s ease;
+}
+.publication-queue-trigger:hover { background:var(--surface); border-color:var(--accent); }
+.publication-queue-trigger:focus-visible { outline:2px solid var(--accent2); outline-offset:2px; }
+.publication-queue-trigger-icon { font-size:16px; }
+.publication-queue-dialog {
+  position:fixed; inset:0 0 0 auto; width:min(620px,calc(100vw - 36px));
+  height:100vh; height:100dvh; max-height:100vh; max-height:100dvh;
+  max-width:none; margin:0; padding:0; overflow:hidden;
+  border:1px solid var(--border); border-right:0; border-radius:16px 0 0 16px;
+  background:var(--surface); color:var(--text); box-shadow:-18px 0 54px rgba(0,0,0,.4);
+}
+.publication-queue-dialog[open] { display:flex; flex-direction:column; animation:publicationQueueSlideIn .2s ease-out; }
+.publication-queue-dialog::backdrop { background:rgba(3,6,12,.7); backdrop-filter:blur(3px); }
+@keyframes publicationQueueSlideIn { from { transform:translateX(12px); opacity:.7; } to { transform:translateX(0); opacity:1; } }
+.publication-queue-panel { display:flex; flex-direction:column; min-height:0; height:100%; }
+.publication-queue-header { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; padding:20px 20px 14px; border-bottom:1px solid var(--border); }
+.publication-queue-title { margin:0; font-size:20px; line-height:1.25; }
+.publication-queue-subtitle { margin-top:5px; color:var(--text2); font-size:12px; }
+.publication-queue-close { width:36px; height:36px; flex:0 0 36px; padding:0; border:1px solid var(--border); border-radius:9px; background:var(--surface2); color:var(--text); font-size:20px; cursor:pointer; }
+.publication-queue-content { min-height:0; overflow-y:auto; padding:14px 20px 22px; }
+.publication-queue-settings { display:grid; gap:12px; padding:14px; border:1px solid var(--border); border-radius:12px; background:var(--surface2); }
+.publication-queue-settings-title { color:var(--text2); font-size:12px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; }
+.publication-queue-settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.publication-queue-setting { display:grid; gap:7px; min-width:0; }
+.publication-queue-setting label { color:var(--text2); font-size:12px; font-weight:600; }
+.publication-queue-setting input { flex:1; min-width:0; width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text); font:inherit; font-size:14px; }
+.publication-queue-setting input:focus { border-color:var(--accent); outline:2px solid rgba(162,155,254,.25); }
+.publication-queue-setting-help { color:var(--text2); font-size:11px; line-height:1.35; }
+.publication-queue-save-settings { justify-self:start; padding:8px 12px; }
+.publication-queue-status { min-height:20px; margin:10px 2px; color:var(--text2); font-size:13px; line-height:1.4; }
+.publication-queue-status.error { color:var(--red); }
+.publication-queue-status.success { color:var(--green); }
+.publication-queue-pause-notice { display:grid; gap:10px; margin-top:12px; padding:12px; border:1px solid rgba(253,203,110,.45); border-radius:10px; background:rgba(253,203,110,.08); color:var(--text); font-size:12px; line-height:1.45; }
+.publication-queue-pause-notice[hidden] { display:none; }
+.publication-queue-pause-notice button { width:auto; justify-self:start; padding:8px 12px; }
+.publication-queue-list { display:grid; gap:10px; }
+.publication-queue-empty { padding:20px 14px; border:1px dashed var(--border); border-radius:10px; color:var(--text2); text-align:center; font-size:13px; }
+.publication-queue-item { overflow:hidden; border:1px solid var(--border); border-radius:12px; background:var(--surface2); }
+.publication-queue-summary { display:grid; grid-template-columns:80px minmax(0,1fr) auto; align-items:center; gap:12px; width:100%; padding:11px; border:0; background:transparent; color:var(--text); text-align:left; cursor:pointer; }
+.publication-queue-summary:hover { background:rgba(255,255,255,.035); }
+.publication-queue-summary:focus-visible { outline:2px solid var(--accent2); outline-offset:-2px; }
+.publication-queue-thumb { display:block; width:80px; aspect-ratio:9/16; object-fit:cover; border:1px solid var(--border); border-radius:7px; background:var(--bg); }
+.publication-queue-thumb-placeholder { display:flex; align-items:center; justify-content:center; color:var(--text2); font-size:11px; text-align:center; }
+.publication-queue-summary-main { min-width:0; display:grid; gap:6px; }
+.publication-queue-item-title { overflow:hidden; font-size:14px; font-weight:700; line-height:1.35; text-overflow:ellipsis; }
+.publication-queue-item-meta { display:flex; align-items:center; flex-wrap:wrap; gap:6px 10px; color:var(--text2); font-size:11px; }
+.publication-queue-platform { color:var(--accent2); font-size:11px; font-weight:700; }
+.publication-queue-target-name { color:var(--text); font-size:11px; }
+.publication-queue-status-chip { display:inline-flex; align-items:center; padding:3px 7px; border:1px solid var(--border); border-radius:999px; color:var(--text2); font-size:10px; white-space:nowrap; }
+.publication-queue-status-chip[data-state="published"] { color:var(--green); border-color:rgba(0,184,148,.4); }
+.publication-queue-status-chip[data-state="failed"],.publication-queue-status-chip[data-state="unknown"] { color:var(--red); border-color:rgba(225,112,85,.45); }
+.publication-queue-chevron { color:var(--text2); font-size:18px; }
+.publication-queue-details { display:grid; gap:12px; padding:0 14px 14px; }
+.publication-queue-video { width:100%; max-height:320px; border-radius:9px; background:#000; }
+.publication-queue-progress-list { display:grid; gap:10px; }
+.publication-queue-target-progress { display:grid; gap:5px; }
+.publication-queue-target-head { display:flex; justify-content:space-between; gap:8px; color:var(--text2); font-size:11px; }
+.publication-queue-progress-track { height:7px; overflow:hidden; border-radius:99px; background:rgba(255,255,255,.09); }
+.publication-queue-progress-fill { width:0; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--accent),var(--accent2)); transition:width .25s ease; }
+.publication-queue-progress-fill.indeterminate { width:38%; background:linear-gradient(90deg,transparent,var(--accent2),transparent); animation:publicationQueueIndeterminate 1.2s ease-in-out infinite; }
+.publication-queue-progress-steps { display:grid; gap:4px; margin:3px 0 0; padding-left:18px; color:var(--text2); font-size:11px; line-height:1.4; }
+@keyframes publicationQueueIndeterminate { from { transform:translateX(-120%); } to { transform:translateX(320%); } }
+.publication-queue-detail { color:var(--text2); font-size:12px; line-height:1.4; overflow-wrap:anywhere; }
+.publication-queue-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.publication-queue-actions .btn { width:auto; padding:9px 13px; }
+.publication-queue-pagination { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:14px; }
+.publication-queue-pagination button { width:auto; padding:8px 12px; }
+.publication-queue-pagination-label { color:var(--text2); font-size:12px; text-align:center; }
+@media (max-width:600px) {
+  .publication-queue-trigger { padding:12px 7px; font-size:12px; }
+  .publication-queue-header { padding:18px 16px 14px; }
+  .publication-queue-content { padding:12px 14px 18px; }
+  .publication-queue-settings-grid { grid-template-columns:1fr 1fr; }
+  .publication-queue-summary { grid-template-columns:64px minmax(0,1fr) auto; gap:9px; padding:9px; }
+  .publication-queue-thumb { width:64px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .publication-queue-trigger { transition:none; }
+  .publication-queue-dialog[open] { animation:none; }
+  .publication-queue-progress-fill { transition:none; }
+  .publication-queue-progress-fill.indeterminate { animation:none; }
+}
 </style>
 </head>
 <body>
@@ -1320,7 +1412,7 @@ input[type="file"]::file-selector-button:hover { border-color:var(--accent); }
             </details>
             <div class="silence-playback" aria-label="Режим предпросмотра разрезов">
               <button type="button" class="btn btn-small" id="silenceModeSource" aria-pressed="true" onclick="setSilencePlaybackMode('source')">Исходник</button>
-              <button type="button" class="btn btn-small" id="silenceModeEdited" aria-pressed="false" onclick="setSilencePlaybackMode('edited')">С вырезанием</button>
+              <button type="button" class="btn btn-small" id="silenceModeEdited" aria-pressed="false" onclick="setSilencePlaybackMode('edited', true)">С вырезанием</button>
               <button type="button" class="btn btn-small" onclick="checkSilenceSeam()" id="silenceCheckSeamBtn" disabled>Проверить стык</button>
               <button type="button" class="btn btn-small" onclick="fitSilenceTimeline()">Вписать</button>
               <label style="font-size:11px;color:var(--text2)">Масштаб
@@ -1655,8 +1747,8 @@ input[type="file"]::file-selector-button:hover { border-color:var(--accent); }
         </div>
         <div class="error-box" id="montageMirrorPublishNotice" style="display:none"></div>
         <div class="publish-field">
-          <div class="publish-field-head"><label for="montagePublishTitle">Заголовок для YouTube</label><span id="montagePublishTitleCount">0 / 119</span></div>
-          <input id="montagePublishTitle" maxlength="119" placeholder="Обязателен, если выбран YouTube" oninput="updatePublishCounts()">
+          <div class="publish-field-head"><label for="montagePublishTitle">Название видео / заголовок YouTube</label><span id="montagePublishTitleCount">0 / 119</span></div>
+          <input id="montagePublishTitle" maxlength="119" placeholder="Можно оставить пустым — возьмём из подписи или имени файла" oninput="updatePublishCounts()">
         </div>
         <div class="publish-field">
           <div class="publish-field-head"><label for="montagePublishText">Текст для Instagram</label><span id="montagePublishTextCount">0 / 2000</span></div>
@@ -1677,14 +1769,18 @@ input[type="file"]::file-selector-button:hover { border-color:var(--accent); }
             <button class="btn btn-primary" type="button" id="generateCoverBtn" style="margin-top:10px" onclick="generateStopFrameCover()">Создать локально</button>
           </div>
         </div>
-        <div class="toggle-desc" style="margin-top:12px">Порядок Instagram: пробное → пробное перевёрнутое → основная лента → основная лента перевёрнутое. YouTube публикуется параллельно.</div>
+        <div class="toggle-desc" style="margin-top:12px">Порядок Instagram: пробное → пробное перевёрнутое → основная лента → основная лента перевёрнутое. Для Instagram и YouTube действует отдельный интервал очереди.</div>
         <div class="error-box" id="montagePublishError"></div>
+        <div class="publication-queue-notice" id="publicationQueueNotice" role="status" aria-live="polite" hidden>
+          <span id="publicationQueueNoticeText"></span>
+          <button class="btn" type="button" onclick="openPublicationQueue()">Открыть очередь</button>
+        </div>
         <div class="publish-live-progress" id="montagePublishLiveProgress"></div>
         <div class="publish-results" id="montagePublishModalResults"></div>
         <div class="publish-actions">
           <button class="btn" type="button" id="montageNewPublishBtn" style="display:none" onclick="startNewPublication()">Новая публикация</button>
           <button class="btn" type="button" onclick="closePublishWindow()">Отмена</button>
-          <button class="btn btn-primary" id="montagePublishBtn" onclick="publishMontage()">Начать публикацию</button>
+          <button class="btn btn-primary" id="montagePublishBtn" type="button" onclick="publishMontage()">Добавить в очередь</button>
         </div>
       </div>
     </div>
@@ -1760,6 +1856,50 @@ input[type="file"]::file-selector-button:hover { border-color:var(--accent); }
       </form>
       <p class="dev-queue-status" id="devQueueStatus" role="status" aria-live="polite"></p>
       <div class="dev-queue-list" id="devQueueNotes" role="list" aria-label="Записи очереди разработки"></div>
+    </div>
+  </div>
+</dialog>
+
+<button class="publication-queue-trigger" id="publicationQueueOpenButton" type="button" aria-label="Открыть очередь публикаций" aria-haspopup="dialog" aria-controls="publicationQueueDialog" aria-expanded="false" onclick="openPublicationQueue()">
+  <span class="publication-queue-trigger-icon" aria-hidden="true">⇧</span>
+  <span>Очередь публикаций</span>
+</button>
+<dialog class="publication-queue-dialog" id="publicationQueueDialog" aria-labelledby="publicationQueueTitle">
+  <div class="publication-queue-panel">
+    <header class="publication-queue-header">
+      <div>
+        <h2 class="publication-queue-title" id="publicationQueueTitle">Очередь публикаций</h2>
+        <p class="publication-queue-subtitle">Instagram и YouTube · локальное расписание</p>
+      </div>
+      <button class="publication-queue-close" type="button" aria-label="Закрыть очередь публикаций" onclick="closePublicationQueue()">×</button>
+    </header>
+    <div class="publication-queue-content">
+      <section class="publication-queue-settings" aria-labelledby="publicationQueueSettingsTitle">
+        <h3 class="publication-queue-settings-title" id="publicationQueueSettingsTitle">Минимальный интервал между публикациями</h3>
+        <div class="publication-queue-settings-grid">
+          <div class="publication-queue-setting">
+            <label for="publicationInstagramInterval">Instagram · раз в</label>
+            <div style="display:flex;align-items:center;gap:8px"><input id="publicationInstagramInterval" type="number" min="0.25" max="168" step="0.25" value="5"><span>ч</span></div>
+          </div>
+          <div class="publication-queue-setting">
+            <label for="publicationYoutubeInterval">YouTube · раз в</label>
+            <div style="display:flex;align-items:center;gap:8px"><input id="publicationYoutubeInterval" type="number" min="0.25" max="168" step="0.25" value="5"><span>ч</span></div>
+          </div>
+        </div>
+        <p class="publication-queue-setting-help">Частота задаётся отдельно. Изменение интервала автоматически пересчитает время ожидающих записей.</p>
+        <button class="btn btn-sm publication-queue-save-settings" id="publicationQueueSaveSettings" type="button" onclick="savePublicationQueueSettings()">Сохранить настройки</button>
+      </section>
+      <div class="publication-queue-pause-notice" id="publicationQueuePauseNotice" role="status" aria-live="polite" hidden>
+        <span id="publicationQueuePauseText"></span>
+        <button class="btn btn-primary" id="publicationQueueResumeButton" type="button" onclick="resumePublicationQueue()">Проверить и запустить очередь</button>
+      </div>
+      <p class="publication-queue-status" id="publicationQueueStatus" role="status" aria-live="polite"></p>
+      <div class="publication-queue-list" id="publicationQueueList" aria-live="polite"></div>
+      <nav class="publication-queue-pagination" aria-label="Страницы очереди публикаций">
+        <button class="btn btn-sm" id="publicationQueuePrev" type="button" onclick="changePublicationQueuePage(-1)">Назад</button>
+        <span class="publication-queue-pagination-label" id="publicationQueuePageLabel">Страница 1 из 1</span>
+        <button class="btn btn-sm" id="publicationQueueNext" type="button" onclick="changePublicationQueuePage(1)">Вперёд</button>
+      </nav>
     </div>
   </div>
 </dialog>
@@ -2111,7 +2251,7 @@ function clearMontageOutput(clearJob = false) {
   document.getElementById('montageNewPublishBtn').style.display = 'none';
   const publishButton = document.getElementById('montagePublishBtn');
   publishButton.disabled = false;
-  publishButton.textContent = 'Начать публикацию';
+  publishButton.textContent = 'Добавить в очередь';
   for (const checkbox of document.querySelectorAll('.publish-target-checkbox')) checkbox.checked = false;
   const video = document.getElementById('montageVideo');
   video.pause();
@@ -2821,15 +2961,10 @@ function deleteSelectedSilenceCut() {
   renderSilenceEditor();
 }
 
-function setSilencePlaybackMode(mode, forceEdited = false) {
-  if (mode === 'edited' && !document.getElementById('silenceTrimEnabled').checked && !forceEdited) {
-    silencePlaybackMode = 'source';
-    silencePreviewForceEdited = false;
-    silenceSetStatus('Включите «Удалять отмеченные паузы», чтобы включить предпросмотр с вырезанием.', 'idle');
-  } else {
-    silencePlaybackMode = mode === 'edited' ? 'edited' : 'source';
-    silencePreviewForceEdited = Boolean(forceEdited && mode === 'edited');
-  }
+function setSilencePlaybackMode(mode, autoPlay = false) {
+  silencePlaybackMode = mode === 'edited' ? 'edited' : 'source';
+  // Preview choice is independent from whether cuts are included in the final render.
+  silencePreviewForceEdited = silencePlaybackMode === 'edited';
   document.getElementById('silenceModeSource').setAttribute('aria-pressed', String(silencePlaybackMode === 'source'));
   document.getElementById('silenceModeEdited').setAttribute('aria-pressed', String(silencePlaybackMode === 'edited'));
   if (silencePlaybackMode === 'edited') {
@@ -2837,6 +2972,12 @@ function setSilencePlaybackMode(mode, forceEdited = false) {
     const current = video.currentTime * 1000;
     const cut = effectiveSilenceIntervals().find(item => current >= item.effective_start_ms && current < item.effective_end_ms);
     if (cut) video.currentTime = cut.effective_end_ms / 1000;
+    if (autoPlay) {
+      const playPromise = video.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => silenceSetStatus('Не удалось запустить предпросмотр видео.', 'error'));
+      }
+    }
   }
 }
 
@@ -2845,7 +2986,7 @@ function checkSilenceSeam() {
   const video = document.getElementById('projectPreviewVideo');
   if (!cut || !video) return;
   silenceSeamRestoreMode = silencePlaybackMode;
-  setSilencePlaybackMode('edited', true);
+  setSilencePlaybackMode('edited');
   video.currentTime = Math.max(0, cut.start_ms / 1000 - 1);
   video.play().catch(() => {});
   const stopAt = Math.min(silenceDurationMs() / 1000, cut.end_ms / 1000 + 1);
@@ -2855,7 +2996,7 @@ function checkSilenceSeam() {
     video.removeEventListener('timeupdate', stop);
     const restoreMode = silenceSeamRestoreMode || 'source';
     silenceSeamRestoreMode = null;
-    setSilencePlaybackMode(restoreMode, restoreMode === 'edited' && document.getElementById('silenceTrimEnabled').checked);
+    setSilencePlaybackMode(restoreMode);
   };
   video.addEventListener('timeupdate', stop);
 }
@@ -3089,7 +3230,6 @@ document.getElementById('silenceTrimEnabled').addEventListener('change', event =
     event.target.checked = false;
     silenceSetStatus('Нельзя удалить всё видео. Оставьте хотя бы один кадр.', 'error');
   }
-  if (!event.target.checked && silencePlaybackMode === 'edited' && !silencePreviewForceEdited) setSilencePlaybackMode('source');
   renderSilenceEditor();
 });
 document.getElementById('silenceZoom').addEventListener('input', event => {
@@ -3395,7 +3535,7 @@ document.addEventListener('change', (e) => {
     if (window.__forceNewPublication) {
       const anyChecked = document.querySelectorAll('.publish-target-checkbox:not(:disabled):checked').length > 0;
       publishButton.disabled = !anyChecked;
-      publishButton.textContent = 'Начать публикацию';
+      publishButton.textContent = 'Добавить в очередь';
     } else {
       updatePublishButton();
     }
@@ -5427,8 +5567,9 @@ async function publishMontage() {
     return;
   }
   const unknownSelected = targets.filter(tid => (window.__publishUnknown || []).includes(tid));
-  let confirmUnknown = false;
-  if (unknownSelected.length) {
+  let confirmUnknown = !!window.__confirmUnknownOnce;
+  window.__confirmUnknownOnce = false;
+  if (unknownSelected.length && !confirmUnknown) {
     const confirmed = window.confirm(
       'Выбранные площадки ранее завершились с неизвестным результатом: ' + unknownSelected.join(', ') +
       '.\nОтправлять публикацию повторно?'
@@ -5438,67 +5579,83 @@ async function publishMontage() {
   }
   const title = document.getElementById('montagePublishTitle').value.trim();
   const text = document.getElementById('montagePublishText').value.trim();
-  if (targets.some(target => target.startsWith('youtube')) && !title) {
-    publishWindowError('Для YouTube укажите заголовок');
-    return;
-  }
   const form = new FormData();
   form.append('targets_json', JSON.stringify(targets));
   form.append('title', title);
   form.append('text', text);
+  if (!window.__publicationQueueRequestId) {
+    window.__publicationQueueRequestId = window.crypto?.randomUUID
+      ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+  form.append('request_id', window.__publicationQueueRequestId);
   if (confirmUnknown) form.append('confirm_unknown', 'true');
   if (window.__forceNewPublication) form.append('new_publication', 'true');
   if (window.__selectedCoverId) form.append('cover_id', window.__selectedCoverId);
-  document.getElementById('montagePublishBtn').disabled = true;
-  document.getElementById('montagePublishBtn').textContent = 'Публикация...';
+  const publishButton = document.getElementById('montagePublishBtn');
+  const queueNotice = document.getElementById('publicationQueueNotice');
+  publishButton.disabled = true;
+  publishButton.textContent = 'Добавление в очередь...';
   document.getElementById('montagePublishError').classList.remove('active');
-  const initialProgress = {};
-  for (const checkbox of document.querySelectorAll('.publish-target-checkbox:checked')) {
-    initialProgress[checkbox.value] = {label:checkbox.parentElement.textContent.trim(),progress:0,status:'preparing',detail:'Отправка запроса серверу'};
-  }
-  renderPublishProgress(initialProgress);
+  queueNotice.hidden = true;
   document.getElementById('montageErrorBox').classList.remove('active');
   const controller = new AbortController();
   const requestTimeout = setTimeout(() => controller.abort(), 30000);
+  let queuedSuccessfully = false;
   try {
-    const res = await fetch(`/api/montage/${montageJobId}/publish`, { method: 'POST', body: form, signal: controller.signal });
+    const res = await fetch(`/api/montage/${montageJobId}/publish-queue`, { method: 'POST', body: form, signal: controller.signal });
     const data = await res.json();
     if (!res.ok) {
-      const detail = data.detail || 'Ошибка публикации';
+      const detail = data.detail || 'Не удалось поставить публикацию в очередь';
+      if (!confirmUnknown && res.status === 409 && Array.isArray(data.confirm_targets)) {
+        const confirmed = window.confirm(
+          'Выбранные площадки ранее завершились с неизвестным результатом: '
+          + data.confirm_targets.join(', ') + '.\nПовторить постановку в очередь?'
+        );
+        if (confirmed) {
+          window.__confirmUnknownOnce = true;
+          publishButton.disabled = false;
+          return publishMontage();
+        }
+      }
       if (!window.__forceNewPublication && res.status === 400 && detail.includes('уже успешно опубликован')) {
         const confirmed = window.confirm(
           'Выбранные площадки уже опубликованы. Начать новую публикацию?'
         );
         if (confirmed) {
           window.__forceNewPublication = true;
-          document.getElementById('montagePublishBtn').textContent = 'Начать публикацию';
-          document.getElementById('montagePublishBtn').disabled = false;
+          publishButton.textContent = 'Добавить в очередь';
+          publishButton.disabled = false;
           return publishMontage();
         }
       }
       publishWindowError(detail);
-      document.getElementById('montagePublishBtn').disabled = false;
-      document.getElementById('montagePublishBtn').textContent = 'Начать публикацию';
+      publishButton.disabled = false;
+      publishButton.textContent = 'Добавить в очередь';
       return;
     }
-    connectMontageWs();
-  window.__forceNewPublication = false;
-  window.__publishFailed = [];
-  window.__publishUnknown = [];
-  window.__publishPublished = [];
-  window.__publishRunKey = null;
-  window.__publishSelectionApplied = false;
-    document.getElementById('montageNewPublishBtn').style.display = 'none';
-    startMontagePolling();
+    queuedSuccessfully = true;
+    window.__publicationQueueRequestId = null;
+    window.__forceNewPublication = false;
+    window.__confirmUnknownOnce = false;
+    const summary = (data.items || []).map(item =>
+      `${item.platform_label}: ${publicationQueueDate(item.scheduled_at)}`
+    ).join(' · ');
+    document.getElementById('publicationQueueNoticeText').textContent =
+      `Добавлено в очередь. ${summary}${data.control?.paused ? ' Очередь на паузе: проверьте цели и запустите её справа.' : ''}`;
+    queueNotice.hidden = false;
+    for (const checkbox of document.querySelectorAll('.publish-target-checkbox')) checkbox.checked = false;
+    updatePublishCounts();
+    publishButton.disabled = true;
+    publishButton.textContent = 'Добавлено в очередь';
   } catch(e) {
-    renderPublishProgress({});
     publishWindowError(e.name === 'AbortError'
-      ? 'Сервер не ответил за 30 секунд. Обновите страницу и повторите публикацию.'
-      : 'Ошибка публикации: ' + e.message);
-    document.getElementById('montagePublishBtn').disabled = false;
-    document.getElementById('montagePublishBtn').textContent = 'Начать публикацию';
+      ? 'Сервер не ответил за 30 секунд. Запись могла попасть в очередь — проверьте её перед повторной отправкой.'
+      : 'Ошибка добавления в очередь: ' + e.message);
+    publishButton.disabled = false;
+    publishButton.textContent = 'Добавить в очередь';
   } finally {
     clearTimeout(requestTimeout);
+    if (queuedSuccessfully) updatePublishButton();
   }
 }
 
@@ -5547,16 +5704,20 @@ function openPublishWindow() {
 
 function startNewPublication() {
   window.__forceNewPublication = true;
+  window.__publicationQueueRequestId = null;
+  window.__confirmUnknownOnce = false;
   document.getElementById('montageNewPublishBtn').style.display = 'none';
   document.getElementById('montagePublishResults').innerHTML = '';
   document.getElementById('montagePublishModalResults').innerHTML = '';
   document.getElementById('montagePublishLiveProgress').innerHTML = '';
   document.getElementById('montagePublishError').classList.remove('active');
+  document.getElementById('publicationQueueNotice').hidden = true;
+  document.getElementById('publicationQueueNoticeText').textContent = '';
   for (const checkbox of document.querySelectorAll('.publish-target-checkbox')) checkbox.checked = false;
   applyMirrorVariantState(window.__opsState || {});
   const publishButton = document.getElementById('montagePublishBtn');
   publishButton.disabled = false;
-  publishButton.textContent = 'Начать публикацию';
+  publishButton.textContent = 'Добавить в очередь';
 }
 
 function closePublishWindow() {
@@ -5594,7 +5755,7 @@ function updatePublishButton() {
   }
   publishButton.disabled = false;
   const allRetry = selected.every(tid => failed.includes(tid));
-  publishButton.textContent = allRetry ? 'Повторить ошибки' : 'Опубликовать выбранные';
+  publishButton.textContent = allRetry ? 'Повторить постановку' : 'Добавить в очередь';
 }
 
 function renderPublishProgress(items) {
@@ -5997,6 +6158,441 @@ async function deleteDevelopmentQueueNote(noteId) {
     setDevelopmentQueueStatus(`Не удалось удалить запись: ${error.message}`, 'error');
   }
 }
+
+const publicationQueueDialog = document.getElementById('publicationQueueDialog');
+const publicationQueueOpenButton = document.getElementById('publicationQueueOpenButton');
+const publicationQueueList = document.getElementById('publicationQueueList');
+const publicationQueueStatus = document.getElementById('publicationQueueStatus');
+const PUBLICATION_QUEUE_PAGE_SIZE = 10;
+let publicationQueuePage = 1;
+let publicationQueuePages = 1;
+let publicationQueueTotal = 0;
+let publicationQueueItems = [];
+let publicationQueueExpanded = new Set();
+let publicationQueuePollingTimer = null;
+let publicationQueuePollingMode = null;
+let publicationQueueSettingsDirty = false;
+let publicationQueueSaving = false;
+let publicationQueuePaused = false;
+
+function setPublicationQueueStatus(message, state = '') {
+  publicationQueueStatus.textContent = message;
+  publicationQueueStatus.className = `publication-queue-status${state ? ` ${state}` : ''}`;
+}
+
+function publicationQueueStatusLabel(status) {
+  return ({
+    queued: 'Запланирована', preparing: 'Подготовка', publishing: 'Публикуется',
+    published: 'Опубликована', done: 'Готово', error: 'Ошибка', failed: 'Ошибка', unknown: 'Проверить вручную',
+    cancelled: 'Отменена',
+  })[status] || status || 'В очереди';
+}
+
+function publicationQueueDate(value) {
+  if (!value) return 'Не назначено';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Не назначено' : date.toLocaleString('ru-RU');
+}
+
+function renderPublicationQueueProgress(item, details) {
+  const targets = item.target_progress || [];
+  const active = ['preparing', 'publishing'].includes(item.status);
+  const terminal = ['published', 'failed', 'unknown'].includes(item.status);
+  if (item.status === 'preparing' && item.preparation_progress
+      && typeof item.preparation_progress.progress === 'number') {
+    const preparation = item.preparation_progress;
+    const wrap = document.createElement('div');
+    wrap.className = 'publication-queue-target-progress';
+    const head = document.createElement('div');
+    head.className = 'publication-queue-target-head';
+    const label = document.createElement('span');
+    label.textContent = 'Подготовка файлов';
+    const value = document.createElement('span');
+    value.textContent = `${Math.round(preparation.progress)}%`;
+    head.append(label, value);
+    const track = document.createElement('div');
+    track.className = 'publication-queue-progress-track';
+    const fill = document.createElement('div');
+    fill.className = 'publication-queue-progress-fill';
+    fill.style.width = `${Math.max(0, Math.min(99, preparation.progress))}%`;
+    track.appendChild(fill);
+    wrap.append(head, track);
+    details.appendChild(wrap);
+  }
+  if (!active && !terminal) return;
+  const progressList = document.createElement('div');
+  progressList.className = 'publication-queue-progress-list';
+  targets.forEach(target => {
+    const row = document.createElement('div');
+    row.className = 'publication-queue-target-progress';
+    const head = document.createElement('div');
+    head.className = 'publication-queue-target-head';
+    const label = document.createElement('span');
+    label.textContent = target.label || target.id;
+    const value = document.createElement('span');
+    const completed = item.status === 'published' || target.status === 'done' || target.status === 'published';
+    value.textContent = completed ? '100%' : typeof target.progress === 'number'
+      ? `${Math.round(target.progress)}%` : publicationQueueStatusLabel(target.status);
+    head.append(label, value);
+    const track = document.createElement('div');
+    track.className = 'publication-queue-progress-track';
+    const fill = document.createElement('div');
+    fill.className = 'publication-queue-progress-fill';
+    if (completed) {
+      fill.style.width = '100%';
+    } else if (target.status === 'queued' || target.status === 'preparing'
+        || target.status === 'publishing' && target.progress == null) {
+      fill.classList.add('indeterminate');
+    } else if (typeof target.progress === 'number') {
+      fill.style.width = `${Math.max(0, Math.min(99, target.progress))}%`;
+    }
+    track.appendChild(fill);
+    row.append(head, track);
+    if (target.detail) {
+      const detail = document.createElement('div');
+      detail.className = 'publication-queue-detail';
+      detail.textContent = target.detail;
+      row.appendChild(detail);
+    }
+    const steps = (target.steps || []).slice(-8);
+    if (steps.length) {
+      const list = document.createElement('ol');
+      list.className = 'publication-queue-progress-steps';
+      steps.forEach(step => {
+        const entry = document.createElement('li');
+        const label = step.label || step.key || 'Шаг публикации';
+        const detail = step.detail ? `: ${step.detail}` : '';
+        entry.textContent = `${label} · ${publicationQueueStatusLabel(step.status)}${detail}`;
+        list.appendChild(entry);
+      });
+      row.appendChild(list);
+    }
+    progressList.appendChild(row);
+  });
+  if (targets.length) details.appendChild(progressList);
+}
+
+function renderPublicationQueue() {
+  publicationQueueList.replaceChildren();
+  if (!publicationQueueItems.length) {
+    const empty = document.createElement('div');
+    empty.className = 'publication-queue-empty';
+    empty.textContent = publicationQueueTotal
+      ? 'На этой странице записей нет.'
+      : 'Очередь пока пуста. Добавьте публикацию из окна публикации монтажа.';
+    publicationQueueList.appendChild(empty);
+    return;
+  }
+
+  publicationQueueItems.forEach(item => {
+    const card = document.createElement('article');
+    card.className = 'publication-queue-item';
+    const expanded = publicationQueueExpanded.has(item.id);
+    const summary = document.createElement('button');
+    summary.type = 'button';
+    summary.className = 'publication-queue-summary';
+    summary.setAttribute('aria-expanded', String(expanded));
+    summary.addEventListener('click', () => {
+      if (publicationQueueExpanded.has(item.id)) publicationQueueExpanded.delete(item.id);
+      else publicationQueueExpanded.add(item.id);
+      renderPublicationQueue();
+    });
+
+    if (item.thumbnail_url) {
+      const thumb = document.createElement('img');
+      thumb.className = 'publication-queue-thumb';
+      thumb.src = item.thumbnail_url;
+      thumb.alt = `Предпросмотр: ${item.display_title || 'видео'}`;
+      thumb.loading = 'lazy';
+      thumb.onerror = () => {
+        const placeholder = document.createElement('div');
+        placeholder.className = 'publication-queue-thumb publication-queue-thumb-placeholder';
+        placeholder.textContent = 'Нет preview';
+        thumb.replaceWith(placeholder);
+      };
+      summary.appendChild(thumb);
+    } else {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'publication-queue-thumb publication-queue-thumb-placeholder';
+      placeholder.textContent = 'Нет preview';
+      summary.appendChild(placeholder);
+    }
+
+    const main = document.createElement('span');
+    main.className = 'publication-queue-summary-main';
+    const title = document.createElement('span');
+    title.className = 'publication-queue-item-title';
+    title.textContent = item.display_title || item.job_id;
+    const meta = document.createElement('span');
+    meta.className = 'publication-queue-item-meta';
+    const platform = document.createElement('span');
+    platform.className = 'publication-queue-platform';
+    platform.textContent = item.platform_label || item.platform;
+    const targetName = document.createElement('span');
+    targetName.className = 'publication-queue-target-name';
+    targetName.textContent = (item.target_labels || []).join(', ');
+    const status = document.createElement('span');
+    status.className = 'publication-queue-status-chip';
+    status.dataset.state = item.status || 'queued';
+    status.textContent = publicationQueueStatusLabel(item.status);
+    const scheduled = document.createElement('span');
+    scheduled.textContent = publicationQueueDate(item.scheduled_at);
+    meta.append(platform, targetName, status, scheduled);
+    main.append(title, meta);
+    const chevron = document.createElement('span');
+    chevron.className = 'publication-queue-chevron';
+    chevron.setAttribute('aria-hidden', 'true');
+    chevron.textContent = expanded ? '⌄' : '›';
+    summary.append(main, chevron);
+    card.appendChild(summary);
+
+    if (expanded) {
+      const details = document.createElement('div');
+      details.className = 'publication-queue-details';
+      if (item.preview_url) {
+        const video = document.createElement('video');
+        video.className = 'publication-queue-video';
+        video.controls = true;
+        video.preload = 'none';
+        if (item.thumbnail_url) video.poster = item.thumbnail_url;
+        video.src = item.preview_url;
+        video.setAttribute('aria-label', `Предпросмотр видео: ${item.display_title || ''}`);
+        details.appendChild(video);
+      }
+      const targets = document.createElement('div');
+      targets.className = 'publication-queue-detail';
+      targets.textContent = `Цели: ${(item.target_labels || []).join(', ')}`;
+      details.appendChild(targets);
+      if (item.error) {
+        const error = document.createElement('div');
+        error.className = 'publication-queue-detail';
+        error.textContent = item.error;
+        details.appendChild(error);
+      }
+      renderPublicationQueueProgress(item, details);
+      const actions = document.createElement('div');
+      actions.className = 'publication-queue-actions';
+      if (['queued', 'failed', 'unknown'].includes(item.status)) {
+        const now = document.createElement('button');
+        now.type = 'button';
+        now.className = 'btn btn-primary';
+        now.textContent = publicationQueuePaused
+          ? 'На паузе' : item.status === 'queued' ? 'Опубликовать сейчас' : 'Повторить сейчас';
+        now.disabled = publicationQueuePaused;
+        now.addEventListener('click', () => publishQueueItemNow(item));
+        actions.appendChild(now);
+      }
+      if (item.status === 'queued') {
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'btn';
+        cancel.textContent = 'Убрать из очереди';
+        cancel.addEventListener('click', () => cancelPublicationQueueItem(item));
+        actions.appendChild(cancel);
+      }
+      details.appendChild(actions);
+      card.appendChild(details);
+    }
+    publicationQueueList.appendChild(card);
+  });
+}
+
+function updatePublicationQueuePagination() {
+  document.getElementById('publicationQueuePageLabel').textContent =
+    `Страница ${publicationQueuePage} из ${publicationQueuePages} · ${publicationQueueTotal} записей`;
+  document.getElementById('publicationQueuePrev').disabled = publicationQueuePage <= 1;
+  document.getElementById('publicationQueueNext').disabled = publicationQueuePage >= publicationQueuePages;
+}
+
+function updatePublicationQueuePolling() {
+  const active = publicationQueueItems.some(item => ['preparing', 'publishing'].includes(item.status));
+  const queued = publicationQueueItems.filter(item => item.status === 'queued');
+  const nextMode = !publicationQueueDialog.open ? null : active ? 'active' : queued.length ? 'waiting' : null;
+  if (nextMode === publicationQueuePollingMode) return;
+  if (publicationQueuePollingTimer) {
+    clearInterval(publicationQueuePollingTimer);
+    clearTimeout(publicationQueuePollingTimer);
+    publicationQueuePollingTimer = null;
+  }
+  publicationQueuePollingMode = nextMode;
+  if (nextMode === 'active') {
+    publicationQueuePollingTimer = setInterval(() => loadPublicationQueue(true), 2000);
+  } else if (nextMode === 'waiting') {
+    const dueTimes = queued.map(item => Date.parse(item.scheduled_at)).filter(Number.isFinite);
+    const nextDue = dueTimes.length ? Math.min(...dueTimes) : Date.now() + 30000;
+    const delay = Math.max(1000, Math.min(30000, nextDue - Date.now() + 500));
+    publicationQueuePollingTimer = setTimeout(() => {
+      publicationQueuePollingTimer = null;
+      publicationQueuePollingMode = null;
+      loadPublicationQueue(true);
+    }, delay);
+  }
+}
+
+function applyPublicationQueueSettings(settings) {
+  for (const setting of settings || []) {
+    const input = setting.platform === 'instagram'
+      ? document.getElementById('publicationInstagramInterval')
+      : setting.platform === 'youtube' ? document.getElementById('publicationYoutubeInterval') : null;
+    if (input) input.value = (Number(setting.interval_minutes) / 60).toString();
+  }
+}
+
+async function loadPublicationQueue(silent = false) {
+  if (!silent) setPublicationQueueStatus('Загружаю очередь публикаций…');
+  try {
+    const response = await fetch(`/api/publication-queue?page=${publicationQueuePage}&page_size=${PUBLICATION_QUEUE_PAGE_SIZE}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    publicationQueueItems = data.items || [];
+    publicationQueuePages = data.pages || 1;
+    publicationQueueTotal = data.total || 0;
+    publicationQueuePaused = !!(data.control && data.control.paused);
+    const pauseNotice = document.getElementById('publicationQueuePauseNotice');
+    pauseNotice.hidden = !publicationQueuePaused;
+    document.getElementById('publicationQueuePauseText').textContent = publicationQueuePaused
+      ? (data.control.pause_reason || 'Очередь приостановлена. Проверьте цели публикации перед отправкой.')
+      : '';
+    if (!publicationQueueSettingsDirty) applyPublicationQueueSettings(data.settings || []);
+    renderPublicationQueue();
+    updatePublicationQueuePagination();
+    if (!silent) setPublicationQueueStatus('Расписание сохраняется на этом компьютере.');
+    updatePublicationQueuePolling();
+  } catch (error) {
+    if (!silent) setPublicationQueueStatus(`Не удалось загрузить очередь: ${error.message}`, 'error');
+    updatePublicationQueuePolling();
+  }
+}
+
+function openPublicationQueue() {
+  if (!publicationQueueDialog.open) publicationQueueDialog.showModal();
+  publicationQueueOpenButton.setAttribute('aria-expanded', 'true');
+  publicationQueuePage = 1;
+  loadPublicationQueue();
+  requestAnimationFrame(() => document.getElementById('publicationInstagramInterval').focus());
+}
+
+function closePublicationQueue() {
+  if (publicationQueueDialog.open) publicationQueueDialog.close();
+}
+
+publicationQueueDialog.addEventListener('close', () => {
+  publicationQueueOpenButton.setAttribute('aria-expanded', 'false');
+  if (publicationQueuePollingTimer) {
+    clearInterval(publicationQueuePollingTimer);
+    clearTimeout(publicationQueuePollingTimer);
+  }
+  publicationQueuePollingTimer = null;
+  publicationQueuePollingMode = null;
+});
+publicationQueueDialog.addEventListener('click', event => {
+  if (event.target === publicationQueueDialog) closePublicationQueue();
+});
+document.getElementById('publicationInstagramInterval').addEventListener('input', () => {
+  publicationQueueSettingsDirty = true;
+});
+document.getElementById('publicationYoutubeInterval').addEventListener('input', () => {
+  publicationQueueSettingsDirty = true;
+});
+
+async function savePublicationQueueSettings() {
+  const instagramHours = Number(document.getElementById('publicationInstagramInterval').value);
+  const youtubeHours = Number(document.getElementById('publicationYoutubeInterval').value);
+  if (![instagramHours, youtubeHours].every(value => Number.isFinite(value) && value >= 0.25 && value <= 168)) {
+    setPublicationQueueStatus('Интервал должен быть от 15 минут до 7 дней.', 'error');
+    return;
+  }
+  const button = document.getElementById('publicationQueueSaveSettings');
+  button.disabled = true;
+  publicationQueueSaving = true;
+  try {
+    const response = await fetch('/api/publication-queue/settings', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({intervals: {
+        instagram: Math.round(instagramHours * 60), youtube: Math.round(youtubeHours * 60),
+      }}),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    publicationQueueSettingsDirty = false;
+    applyPublicationQueueSettings(data.settings || []);
+    await loadPublicationQueue(true);
+    setPublicationQueueStatus('Частота публикаций сохранена. Время ожидающих записей пересчитано.', 'success');
+  } catch (error) {
+    setPublicationQueueStatus(`Не удалось сохранить настройки: ${error.message}`, 'error');
+  } finally {
+    publicationQueueSaving = false;
+    button.disabled = false;
+  }
+}
+
+async function resumePublicationQueue() {
+  const confirmed = window.confirm(
+    'Возобновить очередь? Записи с уже наступившим временем начнут отправляться сразу.'
+  );
+  if (!confirmed) return;
+  const button = document.getElementById('publicationQueueResumeButton');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/publication-queue/resume', {method:'POST'});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    publicationQueuePaused = false;
+    setPublicationQueueStatus('Очередь возобновлена.', 'success');
+    await loadPublicationQueue(true);
+  } catch (error) {
+    setPublicationQueueStatus(`Не удалось возобновить очередь: ${error.message}`, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function publishQueueItemNow(item) {
+  let confirmUnknown = false;
+  const hasUnknown = item.status === 'unknown'
+    || (item.target_progress || []).some(target => target.status === 'unknown');
+  if (hasUnknown) {
+    confirmUnknown = window.confirm(
+      'Результат прошлой отправки неизвестен. Проверьте публикацию на площадке, иначе она может продублироваться. Повторить сейчас?'
+    );
+    if (!confirmUnknown) return;
+  }
+  try {
+    const response = await fetch(`/api/publication-queue/${encodeURIComponent(item.id)}/publish-now`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({confirm_unknown: confirmUnknown}),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    setPublicationQueueStatus('Публикация запущена вне расписания.', 'success');
+    await loadPublicationQueue(true);
+  } catch (error) {
+    setPublicationQueueStatus(`Не удалось запустить публикацию: ${error.message}`, 'error');
+  }
+}
+
+async function cancelPublicationQueueItem(item) {
+  if (!window.confirm(`Убрать «${item.display_title || 'видео'}» из очереди публикаций?`)) return;
+  try {
+    const response = await fetch(`/api/publication-queue/${encodeURIComponent(item.id)}`, {
+      method: 'DELETE',
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    setPublicationQueueStatus('Запись убрана из очереди.', 'success');
+    await loadPublicationQueue(true);
+  } catch (error) {
+    setPublicationQueueStatus(`Не удалось убрать запись: ${error.message}`, 'error');
+  }
+}
+
+function changePublicationQueuePage(delta) {
+  const next = publicationQueuePage + delta;
+  if (next < 1 || next > publicationQueuePages) return;
+  publicationQueuePage = next;
+  loadPublicationQueue();
+}
+
 </script>
 
 </body>

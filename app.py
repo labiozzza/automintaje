@@ -14,6 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 import dev_queue
+import publication_queue
+import publication_queue
 
 import whisper
 from pyannote.audio import Pipeline as DiarizationPipeline
@@ -47,6 +49,9 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 # In-memory job storage
 jobs = {}
 job_queues = {}
+PUBLICATION_QUEUE_WAKE: Optional[asyncio.Event] = None
+PUBLICATION_QUEUE_TASK: Optional[asyncio.Task] = None
+PUBLICATION_QUEUE_LOOP: Optional[asyncio.AbstractEventLoop] = None
 
 # Per-job publish locks (single-process uvicorn limited). All job state lives
 # in memory, so this app is designed for exactly one server process; running
@@ -3887,7 +3892,8 @@ async def process_publish(job_id: str, targets: list, publish_lock: Optional[asy
 
 async def _prepare_then_publish(job_id: str, targets: list, publish_lock,
                                 cover_path: Optional[str] = None, cover_id: str = "",
-                                prepare_ids: Optional[set] = None) -> None:
+                                prepare_ids: Optional[set] = None,
+                                attempt_started_cb=None) -> None:
     """Auto-prepare missing local artefacts, then publish (spec 6).
 
     Runs in the background so the HTTP request returns immediately.  Preparation
@@ -3914,9 +3920,222 @@ async def _prepare_then_publish(job_id: str, targets: list, publish_lock,
         if publish_lock is not None and publish_lock.locked():
             publish_lock.release()
         raise
+    if attempt_started_cb is not None:
+        callback_result = attempt_started_cb()
+        if asyncio.iscoroutine(callback_result):
+            await callback_result
     await process_publish(job_id, targets, publish_lock=publish_lock)
 
 
+def _publication_targets_for_queue_item(queue_item: dict, job: dict) -> tuple[list, Optional[str]]:
+    targets = []
+    cover_id = str(queue_item.get("cover_id") or "")
+    cover_path = None
+    if cover_id:
+        cover = next((item for item in job.get("covers") or [] if item.get("id") == cover_id), None)
+        if cover is None:
+            raise RuntimeError("Выбранная обложка больше не найдена")
+        candidate = MONTAGE_WORK / str(job["id"]) / "covers" / Path(str(cover.get("file") or "")).name
+        if not candidate.is_file():
+            raise RuntimeError("Файл выбранной обложки недоступен")
+        cover_path = str(candidate)
+
+    for target_id in queue_item.get("target_ids") or []:
+        spec = _PUBLISH_TARGET_SPECS.get(str(target_id))
+        if spec is None:
+            raise RuntimeError(f"Неизвестная цель публикации: {target_id}")
+        kind, mirrored, label = spec
+        platform = "youtube" if kind == "youtube" else "instagram"
+        if platform != queue_item.get("platform"):
+            raise RuntimeError("Цель публикации не совпадает с сетью очереди")
+        target = {"id": str(target_id), "kind": kind, "mirrored": mirrored, "label": label}
+        if cover_path:
+            target["cover_path"] = cover_path
+        if kind == "youtube":
+            target["title"] = str(queue_item.get("youtube_title") or queue_item.get("display_title") or "")
+        else:
+            caption = str(queue_item.get("instagram_caption") or "")
+            target["text"] = caption
+            target["caption"] = caption
+        targets.append(target)
+    if not targets:
+        raise RuntimeError("В записи очереди нет целей публикации")
+    return targets, cover_path
+
+
+def _publication_queue_terminal_status(job: dict, targets: list) -> tuple[str, str]:
+    target_ids = [str(target.get("id") or "") for target in targets]
+    statuses = job.get("publish_status") or {}
+    values = [statuses.get(target_id) for target_id in target_ids]
+    if values and all(value == "published" for value in values):
+        return "published", ""
+    if any(value == "unknown" for value in values):
+        errors = job.get("publish_unknown") or {}
+        return "unknown", "; ".join(str(errors.get(tid) or "") for tid in target_ids if statuses.get(tid) == "unknown")
+    if job.get("stage") == "cancelled":
+        return "cancelled", "Публикация отменена пользователем"
+    errors = job.get("publish_errors") or {}
+    detail = "; ".join(str(errors.get(tid) or "") for tid in target_ids if statuses.get(tid) != "published")
+    return "failed", detail or "Не все цели публикации завершились успешно"
+
+
+async def _run_publication_queue_item(queue_item: dict) -> None:
+    queue_id = str(queue_item["id"])
+    job_id = str(queue_item["job_id"])
+    job = jobs.get(job_id)
+    if job is None or job.get("kind") != "montage" or not job.get("result"):
+        await asyncio.to_thread(
+            publication_queue.set_status, queue_id, "failed",
+            "Исходный монтаж больше недоступен",
+        )
+        return
+
+    publish_lock = _publish_lock(job_id)
+    lock_acquired = False
+    try:
+        targets, cover_path = _publication_targets_for_queue_item(queue_item, job)
+        await publish_lock.acquire()
+        lock_acquired = True
+
+        _, missing_targets = await asyncio.to_thread(_publish_readiness, job, targets)
+        prepare_ids = {
+            item.get("target") for item in missing_targets
+            if item.get("reason") in {"video_not_ready", "cover_not_ready"}
+        }
+        if prepare_ids:
+            job["prepare_operation"] = None
+            job["prepare_status"] = "running"
+            job["prepare_error"] = None
+        mirror_blocked = [item for item in missing_targets if item.get("reason") == "mirror_not_ready"]
+        for item in mirror_blocked:
+            target_id = item.get("target")
+            target = next((target for target in targets if target.get("id") == target_id), None)
+            if target is not None:
+                target["preparation_error"] = _preparation_error_message(item)
+
+        job["selected_cover_id"] = str(queue_item.get("cover_id") or "")
+        _initialize_publish_attempt(job, targets, preparing_ids=prepare_ids)
+        _save_montage_job(job_id)
+        await asyncio.to_thread(
+            publication_queue.set_status, queue_id,
+            "preparing" if prepare_ids else "publishing", "",
+        )
+
+        publish_task = _track_montage_task(
+            job_id,
+            _prepare_then_publish(
+                job_id, targets, publish_lock,
+                cover_path=cover_path,
+                cover_id=str(queue_item.get("cover_id") or ""),
+                prepare_ids=prepare_ids,
+                attempt_started_cb=lambda: asyncio.to_thread(
+                    publication_queue.record_attempt, queue_id
+                ),
+            ),
+        )
+        await publish_task
+        lock_acquired = False  # _prepare_then_publish/process_publish releases it.
+        status, error = _publication_queue_terminal_status(job, targets)
+        await asyncio.to_thread(
+            publication_queue.set_progress, queue_id, job.get("publish_progress") or {}
+        )
+        await asyncio.to_thread(publication_queue.set_status, queue_id, status, error)
+    except asyncio.CancelledError:
+        await asyncio.to_thread(
+            publication_queue.set_status, queue_id, "unknown",
+            "Сервер остановил задачу; проверьте результат публикации вручную",
+        )
+        raise
+    except Exception as exc:
+        cancelled = job.get("stage") == "cancelled" or bool(job.get("cancel_requested"))
+        await asyncio.to_thread(
+            publication_queue.set_status, queue_id,
+            "cancelled" if cancelled else "failed", str(exc),
+        )
+    finally:
+        if lock_acquired and publish_lock.locked():
+            publish_lock.release()
+
+
+async def _publication_queue_worker() -> None:
+    while True:
+        try:
+            paused = await asyncio.to_thread(publication_queue.is_paused)
+        except (sqlite3.Error, OSError):
+            paused = True
+        try:
+            item = await asyncio.to_thread(publication_queue.claim_next_due, force_only=paused)
+        except (sqlite3.Error, OSError):
+            item = None
+        if item is not None:
+            try:
+                await _run_publication_queue_item(item)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                await asyncio.to_thread(
+                    publication_queue.set_status, item["id"], "unknown",
+                    f"Ошибка обработчика очереди: {exc}",
+                )
+            continue
+        wake = PUBLICATION_QUEUE_WAKE
+        if wake is None:
+            await asyncio.sleep(2)
+            continue
+        try:
+            await asyncio.wait_for(wake.wait(), timeout=2)
+        except asyncio.TimeoutError:
+            pass
+        wake.clear()
+
+
+def _wake_publication_queue() -> None:
+    loop = PUBLICATION_QUEUE_LOOP
+    wake = PUBLICATION_QUEUE_WAKE
+    if loop is not None and wake is not None and not loop.is_closed():
+        loop.call_soon_threadsafe(wake.set)
+
+
+def _publication_queue_worker_enabled(modules=None) -> bool:
+    if os.environ.get("AUTOMONTAGE_DISABLE_PUBLICATION_QUEUE_WORKER") == "1":
+        return False
+    if os.environ.get("AUTOMONTAGE_ENABLE_PUBLICATION_QUEUE_WORKER") == "1":
+        return True
+    loaded_modules = sys.modules if modules is None else modules
+    return "uvicorn" in loaded_modules
+
+
+@app.on_event("startup")
+async def _start_publication_queue_worker() -> None:
+    global PUBLICATION_QUEUE_WAKE, PUBLICATION_QUEUE_TASK, PUBLICATION_QUEUE_LOOP
+    # TestClient starts ASGI lifespan too; only start the dispatcher in the
+    # production Uvicorn process, not in the test runner that imported app.py.
+    if not _publication_queue_worker_enabled():
+        return
+    try:
+        await asyncio.to_thread(publication_queue.recover_inflight)
+    except (sqlite3.Error, OSError) as exc:
+        print(f"[publication-queue] Storage recovery failed: {exc}", file=sys.stderr)
+    if PUBLICATION_QUEUE_TASK is not None and not PUBLICATION_QUEUE_TASK.done():
+        return
+    PUBLICATION_QUEUE_LOOP = asyncio.get_running_loop()
+    PUBLICATION_QUEUE_WAKE = asyncio.Event()
+    PUBLICATION_QUEUE_TASK = asyncio.create_task(_publication_queue_worker())
+
+
+@app.on_event("shutdown")
+async def _stop_publication_queue_worker() -> None:
+    global PUBLICATION_QUEUE_WAKE, PUBLICATION_QUEUE_TASK, PUBLICATION_QUEUE_LOOP
+    task = PUBLICATION_QUEUE_TASK
+    PUBLICATION_QUEUE_TASK = None
+    PUBLICATION_QUEUE_WAKE = None
+    PUBLICATION_QUEUE_LOOP = None
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 def download_face_model(job_id: str, progress):
     model = montage_engine.MODELS_DIR / "face_landmarker.task"
     if model.exists():
@@ -4799,6 +5018,261 @@ async def start_montage(
     if propose_cover:
         _track_montage_task(job_id, process_cover_suggestions(job_id))
     return {"job_id": job_id, "filename": original_name}
+
+
+class PublicationQueueIntervalInput(BaseModel):
+    interval_minutes: int = Field(
+        ..., ge=publication_queue.MIN_INTERVAL_MINUTES,
+        le=publication_queue.MAX_INTERVAL_MINUTES,
+    )
+
+
+class PublicationQueueSettingsInput(BaseModel):
+    intervals: dict
+
+
+class PublicationQueueNowInput(BaseModel):
+    confirm_unknown: bool = False
+
+
+def _publication_queue_item_view(item: dict) -> dict:
+    result = dict(item)
+    job = jobs.get(str(item.get("job_id") or ""))
+    platform_labels = {"instagram": "Instagram", "youtube": "YouTube"}
+    result["platform_label"] = platform_labels.get(item.get("platform"), item.get("platform"))
+    result["target_labels"] = [
+        _PUBLISH_TARGET_SPECS.get(target_id, (None, False, target_id))[2]
+        for target_id in item.get("target_ids") or []
+    ]
+    result["thumbnail_url"] = f"/api/thumb/{item['job_id']}" if job else ""
+    result["preview_url"] = f"/api/montage/preview/{item['job_id']}" if job else ""
+    progress = (job.get("publish_progress") or {}) if job else {}
+    saved_progress = item.get("progress") or {}
+    result["target_progress"] = [
+        dict(progress.get(target_id) or saved_progress[target_id], id=target_id)
+        if progress.get(target_id) or saved_progress.get(target_id) else {
+            "id": target_id,
+            "label": _PUBLISH_TARGET_SPECS.get(target_id, (None, False, target_id))[2],
+            "progress": 100 if item.get("status") == "published" else None,
+            "status": "done" if item.get("status") == "published" else item.get("status"),
+            "detail": item.get("error") or (
+                "Публикация завершена" if item.get("status") == "published" else "Ожидание публикации"
+            ),
+            "steps": [],
+        }
+        for target_id in item.get("target_ids") or []
+    ]
+    result["preparation_progress"] = (job.get("prepare_operation") or {}) if job else {}
+    return result
+
+
+@app.get("/api/publication-queue")
+async def get_publication_queue(page: int = 1, page_size: int = 10):
+    try:
+        result = await asyncio.to_thread(publication_queue.list_page, page, page_size)
+        result["items"] = [_publication_queue_item_view(item) for item in result["items"]]
+        result["settings"] = await asyncio.to_thread(publication_queue.get_settings)
+        result["control"] = await asyncio.to_thread(publication_queue.get_control)
+        return result
+    except (sqlite3.Error, OSError) as exc:
+        raise HTTPException(503, "Очередь публикаций временно недоступна") from exc
+
+
+@app.put("/api/publication-queue/settings")
+async def update_publication_queue_settings(payload: PublicationQueueSettingsInput):
+    try:
+        settings = await asyncio.to_thread(publication_queue.update_settings, payload.intervals)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except (sqlite3.Error, OSError) as exc:
+        raise HTTPException(503, "Не удалось сохранить частоту публикаций") from exc
+    _wake_publication_queue()
+    return {"settings": settings}
+
+
+@app.post("/api/publication-queue/resume")
+async def resume_publication_queue():
+    try:
+        control = await asyncio.to_thread(publication_queue.resume_queue)
+    except (sqlite3.Error, OSError) as exc:
+        raise HTTPException(503, "Не удалось возобновить очередь") from exc
+    _wake_publication_queue()
+    return {"control": control}
+
+
+@app.put("/api/publication-queue/settings/{platform}")
+async def update_publication_queue_setting(
+    platform: str, payload: PublicationQueueIntervalInput
+):
+    try:
+        setting = await asyncio.to_thread(
+            publication_queue.update_setting, platform, payload.interval_minutes
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except (sqlite3.Error, OSError) as exc:
+        raise HTTPException(503, "Не удалось сохранить частоту публикаций") from exc
+    _wake_publication_queue()
+    return {"setting": setting, "settings": await asyncio.to_thread(publication_queue.get_settings)}
+
+
+@app.post("/api/publication-queue/{queue_id}/publish-now")
+async def publish_queue_item_now(queue_id: str, payload: PublicationQueueNowInput):
+    try:
+        item = await asyncio.to_thread(publication_queue.get_item, queue_id)
+        if item is None:
+            raise HTTPException(404, "Запись очереди не найдена")
+        job = jobs.get(str(item.get("job_id") or "")) or {}
+        target_status = job.get("publish_status") or {}
+        target_unknown = job.get("publish_unknown") or {}
+        unknown_targets = [
+            target_id for target_id in item.get("target_ids") or []
+            if item.get("status") == "unknown"
+            or target_status.get(target_id) == "unknown"
+            or target_id in target_unknown
+        ]
+        if unknown_targets and not payload.confirm_unknown:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": "Перед повторной отправкой проверьте неизвестный результат публикации",
+                    "confirm_targets": unknown_targets,
+                },
+            )
+        updated = await asyncio.to_thread(
+            publication_queue.publish_now, queue_id, payload.confirm_unknown
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (sqlite3.Error, OSError) as exc:
+        raise HTTPException(503, "Не удалось запустить публикацию сейчас") from exc
+    if updated is None:
+        raise HTTPException(404, "Запись очереди не найдена")
+    _wake_publication_queue()
+    return {"item": _publication_queue_item_view(updated)}
+
+
+@app.delete("/api/publication-queue/{queue_id}")
+async def cancel_publication_queue_item(queue_id: str):
+    try:
+        item = await asyncio.to_thread(publication_queue.cancel_queued_item, queue_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (sqlite3.Error, OSError) as exc:
+        raise HTTPException(503, "Не удалось убрать запись из очереди") from exc
+    if item is None:
+        raise HTTPException(404, "Запись очереди не найдена")
+    _wake_publication_queue()
+    return {"deleted": True}
+
+
+@app.post("/api/montage/{job_id}/publish-queue", status_code=201)
+async def enqueue_montage_publication(
+    job_id: str,
+    targets_json: str = Form(...),
+    title: str = Form(""),
+    text: str = Form(""),
+    cover_id: str = Form(""),
+    request_id: str = Form(""),
+    new_publication: bool = Form(False),
+    confirm_unknown: bool = Form(False),
+):
+    job = jobs.get(job_id)
+    if job is None or job.get("kind") != "montage":
+        raise HTTPException(404, "Montage job not found")
+    if not job.get("result") or job.get("status") not in {"done", "completed", "processing", "publishing"}:
+        raise HTTPException(400, "Сначала завершите рендер")
+    try:
+        requested_targets = json.loads(targets_json)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(400, "targets_json must be valid JSON") from exc
+    if not isinstance(requested_targets, list) or not requested_targets:
+        raise HTTPException(400, "Список целей пуст")
+    if len(title) > 119:
+        raise HTTPException(400, "Заголовок должен быть не длиннее 119 символов")
+    if len(text) > 2000:
+        raise HTTPException(400, "Текст должен быть не длиннее 2000 символов")
+
+    target_ids = list(dict.fromkeys(str(item) for item in requested_targets))
+    unknown = [target_id for target_id in target_ids if target_id not in _PUBLISH_TARGET_SPECS]
+    if unknown:
+        raise HTTPException(400, f"Неизвестные цели публикации: {', '.join(unknown)}")
+    if not new_publication:
+        published = set((job.get("publish") or {}).keys())
+        published.update(
+            target_id for target_id, status in (job.get("publish_status") or {}).items()
+            if status == "published"
+        )
+        target_ids = [target_id for target_id in target_ids if target_id not in published]
+    if not target_ids:
+        raise HTTPException(400, "Все выбранные цели уже успешно опубликованы")
+
+    unknown_needing_confirm = [
+        target_id for target_id in target_ids
+        if (job.get("publish_status") or {}).get(target_id) == "unknown"
+        or target_id in (job.get("publish_unknown") or {})
+    ]
+    if unknown_needing_confirm and not confirm_unknown:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "Требуется подтверждение повторной публикации: "
+                          + ", ".join(unknown_needing_confirm),
+                "confirm_targets": unknown_needing_confirm,
+            },
+        )
+
+    if any(_PUBLISH_TARGET_SPECS[target_id][1] for target_id in target_ids) and not mirror_variant_ready(job):
+        raise HTTPException(400, "Отражённая версия не готова. Включите её при монтаже и повторите.")
+    selected_cover = None
+    if cover_id:
+        selected_cover = next(
+            (item for item in job.get("covers") or [] if item.get("id") == cover_id), None
+        )
+        if selected_cover is None:
+            raise HTTPException(400, "Выбранная обложка не найдена")
+        cover_path = MONTAGE_WORK / job_id / "covers" / Path(str(selected_cover.get("file") or "")).name
+        if not cover_path.is_file():
+            raise HTTPException(400, "Файл выбранной обложки недоступен")
+
+    cleaned_title = title.strip()
+    cleaned_caption = text.strip()
+    original_title = Path(str(job.get("original_name") or "")).stem or job_id
+    fallback_title = cleaned_title or cleaned_caption or original_title
+    youtube_title = (cleaned_title or cleaned_caption or original_title)[:119]
+    request_key = request_id.strip() or uuid.uuid4().hex
+    if len(request_key) > 120:
+        raise HTTPException(400, "Идентификатор запроса слишком длинный")
+    items = []
+    try:
+        for target_id in target_ids:
+            kind = _PUBLISH_TARGET_SPECS[target_id][0]
+            platform = "youtube" if kind == "youtube" else "instagram"
+            item = await asyncio.to_thread(
+                publication_queue.enqueue,
+                request_id=f"{request_key}:target:{target_id}",
+                job_id=job_id,
+                platform=platform,
+                target_ids=[target_id],
+                display_title=fallback_title[:2000],
+                youtube_title=youtube_title,
+                instagram_caption=cleaned_caption,
+                cover_id=cover_id,
+                confirm_unknown=confirm_unknown,
+            )
+            items.append(item)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except (sqlite3.Error, OSError) as exc:
+        raise HTTPException(503, "Не удалось добавить публикацию в очередь") from exc
+
+    _wake_publication_queue()
+    return {
+        "status": "queued",
+        "items": [_publication_queue_item_view(item) for item in items],
+        "settings": await asyncio.to_thread(publication_queue.get_settings),
+        "control": await asyncio.to_thread(publication_queue.get_control),
+    }
 
 
 @app.post("/api/montage/{job_id}/publish")
