@@ -1,4 +1,4 @@
-import os, json, uuid, asyncio, subprocess, time, re, tempfile, hashlib, urllib.request, importlib, threading, gc, math, io, sys, secrets
+import os, json, uuid, asyncio, subprocess, time, re, tempfile, hashlib, urllib.request, importlib, threading, gc, math, io, sys, secrets, sqlite3, ipaddress
 import shutil
 import traceback
 import urllib.parse
@@ -11,6 +11,9 @@ from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+import dev_queue
 
 import whisper
 from pyannote.audio import Pipeline as DiarizationPipeline
@@ -860,6 +863,65 @@ async def list_projects():
         projects.append(entry)
     projects.sort(key=lambda p: p.get("created_at") or "", reverse=True)
     return {"projects": projects}
+
+
+class DevelopmentQueueNoteInput(BaseModel):
+    text: str = Field(..., min_length=1, max_length=dev_queue.MAX_NOTE_CHARS)
+
+
+def _require_loopback_development_queue(request: Request) -> None:
+    client = request.client
+    if client is None:
+        raise HTTPException(403, "Очередь разработки доступна только на этом компьютере")
+    try:
+        address = ipaddress.ip_address(client.host)
+    except ValueError as exc:
+        raise HTTPException(403, "Очередь разработки доступна только на этом компьютере") from exc
+    if getattr(address, "ipv4_mapped", None) is not None:
+        address = address.ipv4_mapped
+    if not address.is_loopback:
+        raise HTTPException(403, "Очередь разработки доступна только на этом компьютере")
+
+
+def _development_queue_call(operation, *args):
+    try:
+        return operation(*args)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (sqlite3.Error, OSError) as exc:
+        raise HTTPException(503, "Хранилище очереди временно недоступно") from exc
+
+
+@app.get("/api/development-queue")
+def list_development_queue(request: Request):
+    _require_loopback_development_queue(request)
+    return {"notes": _development_queue_call(dev_queue.list_notes)}
+
+
+@app.post("/api/development-queue", status_code=201)
+def create_development_queue_note(payload: DevelopmentQueueNoteInput, request: Request):
+    _require_loopback_development_queue(request)
+    return {"note": _development_queue_call(dev_queue.create_note, payload.text)}
+
+
+@app.patch("/api/development-queue/{note_id}")
+def update_development_queue_note(
+    note_id: str, payload: DevelopmentQueueNoteInput, request: Request
+):
+    _require_loopback_development_queue(request)
+    note = _development_queue_call(dev_queue.update_note, note_id, payload.text)
+    if note is None:
+        raise HTTPException(404, "Заметка не найдена")
+    return {"note": note}
+
+
+@app.delete("/api/development-queue/{note_id}")
+def delete_development_queue_note(note_id: str, request: Request):
+    _require_loopback_development_queue(request)
+    deleted = _development_queue_call(dev_queue.delete_note, note_id)
+    if not deleted:
+        raise HTTPException(404, "Заметка не найдена")
+    return {"ok": True}
 
 
 @app.delete("/api/projects/{project_id}")

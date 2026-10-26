@@ -336,18 +336,25 @@ select option { background: var(--surface2); }
   justify-content: center;
   gap: 8px;
   padding: 12px 24px;
-  border: none;
+  border: 1px solid var(--border);
   border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s;
   width: 100%;
 }
+
+.btn:hover:not(:disabled) { background: var(--surface); border-color: var(--accent); }
+.btn:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn-primary {
   background: var(--accent);
   color: white;
+  border-color: transparent;
 }
 
 .btn-primary:hover { background: var(--accent2); }
@@ -849,6 +856,18 @@ select option { background: var(--surface2); }
 .animation-frame-list { display:flex; gap:10px; flex-wrap:wrap; min-height:96px; padding:12px; border:1px dashed var(--border); border-radius:10px; }
 .animation-frame { width:82px; padding:6px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); cursor:grab; text-align:center; }
 .animation-frame img { width:68px; height:68px; object-fit:contain; display:block; }
+.animation-edit-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:end; margin-bottom:12px; }
+.animation-edit-actions .setting-group { flex:1; min-width:200px; }
+.animation-edit-actions .btn { width:auto; white-space:nowrap; }
+.animation-builder-grid { grid-template-columns:minmax(0, 1.25fr) minmax(160px, .75fr); }
+.animation-builder-grid .setting-group { min-width:0; }
+#animationBuilderName { width:100%; padding:10px 12px; color:var(--text); background:var(--surface2); border:1px solid var(--border); border-radius:8px; font-size:14px; }
+#animationBuilderName:focus { border-color:var(--accent); outline:none; }
+#animationBuilderInput { display:block; width:100%; padding:8px; color:var(--text2); background:var(--surface2); border:1px solid var(--border); border-radius:8px; font-size:13px; }
+input[type="file"]::file-selector-button { margin-right:10px; padding:7px 12px; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:6px; cursor:pointer; }
+input[type="file"]::file-selector-button:hover { border-color:var(--accent); }
+.animation-preview-empty { padding:10px 14px; color:var(--text); background:rgba(10,10,15,.78); border:1px solid rgba(255,255,255,.14); border-radius:8px; font-size:13px; line-height:1.4; text-align:center; }
+.animation-preview-image[hidden] { display:none; }
 .animation-frame.dragging { opacity:.35; transform:scale(1.04); box-shadow:0 6px 18px rgba(0,0,0,.45); }
 .animation-frame { position:relative; transition:transform .12s ease, box-shadow .12s ease; }
 .animation-frame.drop-before::before, .animation-frame.drop-after::after {
@@ -947,6 +966,9 @@ select option { background: var(--surface2); }
 /* Responsive */
 @media (max-width: 600px) {
   .settings-grid { grid-template-columns: 1fr; }
+  .animation-builder-grid { grid-template-columns:1fr; }
+  .animation-edit-actions .setting-group { flex:1 1 100%; min-width:0; }
+  .animation-edit-actions .btn { flex:1 1 auto; padding:10px 12px; }
   .export-bar { flex-direction: column; }
   .export-btn { width: 100%; text-align: center; }
 
@@ -964,6 +986,65 @@ select option { background: var(--surface2); }
   .view-tab { padding: 8px 12px; font-size: 13px; }
   .montage-section { margin-bottom: 16px; }
   .section-eyebrow { font-size: 12px; }
+}
+
+.dev-queue-trigger {
+  position:fixed; left:0; top:50%; z-index:900; transform:translateY(-50%);
+  display:flex; align-items:center; gap:8px; padding:14px 9px;
+  border:1px solid var(--border); border-left:0; border-radius:0 10px 10px 0;
+  background:var(--surface2); color:var(--text); box-shadow:0 6px 20px rgba(0,0,0,.28);
+  font-family:inherit; font-size:13px; font-weight:600; line-height:1.2;
+  writing-mode:vertical-rl; cursor:pointer;
+  transition:background-color .18s ease,border-color .18s ease;
+}
+.dev-queue-trigger:hover { background:var(--surface); border-color:var(--accent); }
+.dev-queue-trigger:focus-visible { outline:2px solid var(--accent2); outline-offset:2px; }
+.dev-queue-trigger-icon { font-size:16px; }
+.dev-queue-dialog {
+  position:fixed; inset:0 auto 0 0; width:min(420px,calc(100vw - 36px));
+  height:100vh; height:100dvh; max-height:100vh; max-height:100dvh;
+  max-width:none; margin:0; padding:0; overflow:hidden;
+  border:1px solid var(--border); border-left:0; border-radius:0 16px 16px 0;
+  background:var(--surface); color:var(--text); box-shadow:18px 0 54px rgba(0,0,0,.4);
+}
+.dev-queue-dialog[open] { display:flex; flex-direction:column; animation:devQueueSlideIn .2s ease-out; }
+.dev-queue-dialog::backdrop { background:rgba(3,6,12,.7); backdrop-filter:blur(3px); }
+@keyframes devQueueSlideIn { from { transform:translateX(-12px); opacity:.7; } to { transform:translateX(0); opacity:1; } }
+.dev-queue-panel { display:flex; flex-direction:column; min-height:0; height:100%; }
+.dev-queue-header { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; padding:22px 20px 16px; border-bottom:1px solid var(--border); }
+.dev-queue-title { margin:0; font-size:20px; line-height:1.25; }
+.dev-queue-subtitle { margin-top:5px; color:var(--text2); font-size:12px; }
+.dev-queue-close { width:36px; height:36px; flex:0 0 36px; padding:0; border:1px solid var(--border); border-radius:9px; background:var(--surface2); color:var(--text); font-size:20px; cursor:pointer; }
+.dev-queue-close:hover { border-color:var(--accent); }
+.dev-queue-close:focus-visible { outline:2px solid var(--accent2); outline-offset:2px; }
+.dev-queue-content { min-height:0; overflow-y:auto; padding:18px 20px 24px; }
+.dev-queue-add { display:grid; gap:10px; padding:14px; border:1px solid var(--border); border-radius:12px; background:var(--surface2); }
+.dev-queue-add label,.dev-queue-edit-label { color:var(--text2); font-size:12px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; }
+#devQueueDraft,.dev-queue-edit-text { width:100%; min-height:92px; resize:vertical; padding:11px 12px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text); font:inherit; font-size:14px; line-height:1.5; }
+#devQueueDraft:focus,.dev-queue-edit-text:focus { border-color:var(--accent); outline:2px solid rgba(162,155,254,.25); }
+.dev-queue-add .btn,.dev-queue-edit .btn { width:auto; justify-self:start; padding:9px 14px; }
+.dev-queue-status { min-height:20px; margin:12px 2px; color:var(--text2); font-size:13px; line-height:1.4; }
+.dev-queue-status.error { color:var(--red); }
+.dev-queue-status.success { color:var(--green); }
+.dev-queue-list { display:grid; gap:10px; }
+.dev-queue-empty { padding:20px 14px; border:1px dashed var(--border); border-radius:10px; color:var(--text2); text-align:center; font-size:13px; }
+.dev-queue-note { display:grid; gap:12px; padding:14px; border:1px solid var(--border); border-radius:12px; background:var(--surface2); }
+.dev-queue-note-text { white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px; line-height:1.5; }
+.dev-queue-note-meta { color:var(--text2); font-size:11px; }
+.dev-queue-note-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.dev-queue-note-actions .btn { width:auto; padding:8px 12px; font-size:12px; }
+.dev-queue-delete { color:#ff9d9d; border-color:rgba(225,112,85,.4); }
+.dev-queue-edit { display:grid; gap:10px; }
+.dev-queue-edit-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.dev-queue-edit-actions .btn { width:auto; padding:8px 12px; font-size:12px; }
+@media (max-width:600px) {
+  .dev-queue-trigger { padding:12px 7px; font-size:12px; }
+  .dev-queue-header { padding:18px 16px 14px; }
+  .dev-queue-content { padding:14px 16px 20px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .dev-queue-trigger { transition:none; }
+  .dev-queue-dialog[open] { animation:none; }
 }
 </style>
 </head>
@@ -1613,24 +1694,24 @@ select option { background: var(--surface2); }
   <div id="viewAnimations" class="view">
       <div class="card">
         <div class="card-title">Создание анимации</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px">
-          <div class="setting-group" style="flex:1;min-width:200px"><label>Существующая анимация</label>
+        <div class="animation-edit-actions">
+          <div class="setting-group"><label>Существующая анимация</label>
             <select id="animationEditSelect"></select>
           </div>
-          <button class="btn" onclick="editAnimation()">Редактировать</button>
-          <button class="btn" onclick="deleteAnimation()">Удалить</button>
-          <button class="btn" onclick="resetAnimationBuilder()">Новая</button>
+          <button class="btn btn-sm" type="button" onclick="editAnimation()">Редактировать</button>
+          <button class="btn btn-sm" type="button" onclick="deleteAnimation()">Удалить</button>
+          <button class="btn btn-sm" type="button" onclick="resetAnimationBuilder()">Новая</button>
         </div>
         <div class="dependency-note" id="animationEditNote"></div>
-      <div class="montage-grid">
-        <div class="setting-group"><label>Название</label><input id="animationBuilderName" value="Новая анимация"></div>
-        <div class="setting-group"><label>Кадров в секунду</label><input id="animationBuilderFps" type="number" value="10" min="1" max="60"></div>
-        <div class="setting-group"><label>Кадры PNG/JPG/WebP</label><input id="animationBuilderInput" type="file" accept="image/*" multiple></div>
+      <div class="montage-grid animation-builder-grid">
+        <div class="setting-group"><label for="animationBuilderName">Название</label><input id="animationBuilderName" value="Новая анимация"></div>
+        <div class="setting-group"><label for="animationBuilderFps">Кадров в секунду</label><input id="animationBuilderFps" type="number" value="10" min="1" max="60"></div>
+        <div class="setting-group"><label for="animationBuilderInput">Кадры PNG/JPG/WebP</label><input id="animationBuilderInput" type="file" accept="image/*" multiple></div>
       </div>
       <p class="toggle-desc">Перетаскивайте карточки кадров, чтобы изменить их порядок. Наведите на кадр, чтобы удалить его.</p>
       <div class="animation-frame-list" id="animationFrameList"></div>
       <div style="margin-top:8px">
-        <button class="btn" onclick="clearAnimationFrames()">Очистить всё</button>
+        <button class="btn" type="button" onclick="clearAnimationFrames()">Очистить всё</button>
       </div>
       <div class="card" style="margin-top:14px">
         <div class="card-title">Предпросмотр</div>
@@ -1642,11 +1723,12 @@ select option { background: var(--surface2); }
             <div style="display:flex;gap:6px" id="animationBgSwatches"></div>
           </div>
           <div class="setting-group"><label>&nbsp;</label>
-            <button class="btn" id="animationPreviewPlay" onclick="toggleAnimationPreview()">▶ Смотреть</button>
+            <button class="btn" type="button" id="animationPreviewPlay" onclick="toggleAnimationPreview()">▶ Смотреть</button>
           </div>
         </div>
         <div id="animationPreviewBox" style="display:flex;align-items:center;justify-content:center;min-height:180px;border-radius:10px;border:1px solid var(--border);background:#00ff00">
-          <img id="animationPreviewImg" alt="Предпросмотр анимации" style="max-width:100%;max-height:320px;object-fit:contain">
+          <div class="animation-preview-empty" id="animationPreviewEmpty">Добавьте кадры, чтобы увидеть предпросмотр.</div>
+          <img class="animation-preview-image" id="animationPreviewImg" alt="Предпросмотр анимации" hidden style="max-width:100%;max-height:320px;object-fit:contain">
         </div>
         <div class="progress-detail" id="animationPreviewStatus" style="margin-top:8px"></div>
       </div>
@@ -1656,6 +1738,31 @@ select option { background: var(--surface2); }
   </div>
 
 </div>
+
+<button class="dev-queue-trigger" id="devQueueOpenButton" type="button" aria-label="Открыть очередь разработки" aria-haspopup="dialog" aria-controls="devQueueDialog" aria-expanded="false" onclick="openDevelopmentQueue()">
+  <span class="dev-queue-trigger-icon" aria-hidden="true">▤</span>
+  <span>Очередь разработки</span>
+</button>
+<dialog class="dev-queue-dialog" id="devQueueDialog" aria-labelledby="devQueueTitle">
+  <div class="dev-queue-panel">
+    <header class="dev-queue-header">
+      <div>
+        <h2 class="dev-queue-title" id="devQueueTitle">Очередь разработки</h2>
+        <p class="dev-queue-subtitle">Заметки сохраняются в SQLite на этом компьютере</p>
+      </div>
+      <button class="dev-queue-close" type="button" aria-label="Закрыть очередь разработки" onclick="closeDevelopmentQueue()">×</button>
+    </header>
+    <div class="dev-queue-content">
+      <form class="dev-queue-add" id="devQueueAddForm">
+        <label for="devQueueDraft">Новая запись</label>
+        <textarea id="devQueueDraft" maxlength="10000" placeholder="Запишите задачу или мысль…" required></textarea>
+        <button class="btn btn-primary" id="devQueueAddButton" type="submit">Добавить запись</button>
+      </form>
+      <p class="dev-queue-status" id="devQueueStatus" role="status" aria-live="polite"></p>
+      <div class="dev-queue-list" id="devQueueNotes" role="list" aria-label="Записи очереди разработки"></div>
+    </div>
+  </div>
+</dialog>
 
 <script>
 let jobId = null;
@@ -4176,6 +4283,14 @@ function deleteAnimationFrame(index) {
   restartAnimationPreview();
 }
 
+function resetAnimationPreviewImage() {
+  const img = document.getElementById('animationPreviewImg');
+  const empty = document.getElementById('animationPreviewEmpty');
+  img.hidden = true;
+  img.removeAttribute('src');
+  empty.hidden = false;
+}
+
 function clearAnimationFrames() {
   if (!animationBuilderFrames.length) return;
   if (!window.confirm(`Удалить все ${animationBuilderFrames.length} кадров?`)) return;
@@ -4184,7 +4299,7 @@ function clearAnimationFrames() {
   });
   animationBuilderFrames = [];
   stopAnimationPreview();
-  document.getElementById('animationPreviewImg').removeAttribute('src');
+  resetAnimationPreviewImage();
   document.getElementById('animationPreviewStatus').textContent = '';
   renderAnimationFrames();
 }
@@ -4254,7 +4369,11 @@ function toggleAnimationPreview() {
   animationPreviewIndex = 0;
   const tick = () => {
     const file = animationBuilderFrames[animationPreviewIndex % animationBuilderFrames.length];
-    if (file) img.src = file._previewUrl || URL.createObjectURL(file);
+    if (file) {
+      img.src = file._previewUrl || URL.createObjectURL(file);
+      img.hidden = false;
+      document.getElementById('animationPreviewEmpty').hidden = true;
+    }
     status.textContent = `Кадр ${animationPreviewIndex % animationBuilderFrames.length + 1}/${animationBuilderFrames.length} • ${fps} fps`;
     animationPreviewIndex += 1;
   };
@@ -4324,7 +4443,7 @@ function resetAnimationBuilder() {
   document.getElementById('animationEditNote').textContent = '';
   document.getElementById('animationEditNote').classList.remove('active');
   stopAnimationPreview();
-  document.getElementById('animationPreviewImg').removeAttribute('src');
+  resetAnimationPreviewImage();
   document.getElementById('animationPreviewStatus').textContent = '';
   renderAnimationFrames();
 }
@@ -5665,6 +5784,219 @@ document.addEventListener('visibilitychange', () => {
   }
   if (!document.hidden && jobId) startTranscriptionPolling();
 });
+
+const devQueueDialog = document.getElementById('devQueueDialog');
+const devQueueOpenButton = document.getElementById('devQueueOpenButton');
+const devQueueAddForm = document.getElementById('devQueueAddForm');
+const devQueueDraft = document.getElementById('devQueueDraft');
+const devQueueAddButton = document.getElementById('devQueueAddButton');
+const devQueueNotesElement = document.getElementById('devQueueNotes');
+const devQueueStatus = document.getElementById('devQueueStatus');
+const DEV_QUEUE_MAX_CHARS = 10000;
+let devQueueNotes = [];
+let devQueueLoaded = false;
+let devQueueEditingId = null;
+let devQueueSaving = false;
+
+function setDevelopmentQueueStatus(message, state = '') {
+  devQueueStatus.textContent = message;
+  devQueueStatus.className = `dev-queue-status${state ? ` ${state}` : ''}`;
+}
+
+async function developmentQueueRequest(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {'Content-Type': 'application/json', ...(options.headers || {})},
+  });
+  let data = {};
+  try { data = await response.json(); } catch (error) { /* Empty error response. */ }
+  if (!response.ok) {
+    let detail = data.detail;
+    if (Array.isArray(detail)) detail = detail.map(item => item.msg || '').filter(Boolean).join(' ');
+    throw new Error(typeof detail === 'string' ? detail : `Ошибка сервера (${response.status})`);
+  }
+  return data;
+}
+
+function developmentQueueButton(text, className, onClick, label) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `btn btn-sm${className ? ` ${className}` : ''}`;
+  button.textContent = text;
+  if (label) button.setAttribute('aria-label', label);
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function renderDevelopmentQueue() {
+  devQueueNotesElement.replaceChildren();
+  if (!devQueueLoaded) return;
+  if (!devQueueNotes.length) {
+    const empty = document.createElement('p');
+    empty.className = 'dev-queue-empty';
+    empty.textContent = 'Записей пока нет. Добавьте первую заметку выше.';
+    devQueueNotesElement.appendChild(empty);
+    return;
+  }
+
+  devQueueNotes.forEach(note => {
+    const card = document.createElement('article');
+    card.className = 'dev-queue-note';
+    card.setAttribute('role', 'listitem');
+
+    if (devQueueEditingId === note.id) {
+      const editor = document.createElement('div');
+      editor.className = 'dev-queue-edit';
+      const label = document.createElement('label');
+      label.className = 'dev-queue-edit-label';
+      label.textContent = 'Изменить запись';
+      const textarea = document.createElement('textarea');
+      textarea.className = 'dev-queue-edit-text';
+      textarea.maxLength = DEV_QUEUE_MAX_CHARS;
+      textarea.value = note.text;
+      label.htmlFor = `devQueueEdit-${note.id}`;
+      textarea.id = label.htmlFor;
+
+      const actions = document.createElement('div');
+      actions.className = 'dev-queue-edit-actions';
+      const save = developmentQueueButton('Сохранить', 'btn-primary', () => {
+        updateDevelopmentQueueNote(note.id, textarea.value);
+      });
+      const cancel = developmentQueueButton('Отмена', '', () => {
+        devQueueEditingId = null;
+        renderDevelopmentQueue();
+      });
+      actions.append(save, cancel);
+      editor.append(label, textarea, actions);
+      card.appendChild(editor);
+    } else {
+      const text = document.createElement('div');
+      text.className = 'dev-queue-note-text';
+      text.textContent = note.text;
+      const meta = document.createElement('div');
+      meta.className = 'dev-queue-note-meta';
+      const timestamp = new Date(note.updated_at);
+      meta.textContent = Number.isNaN(timestamp.getTime())
+        ? '' : `Обновлено: ${timestamp.toLocaleString('ru-RU')}`;
+
+      const actions = document.createElement('div');
+      actions.className = 'dev-queue-note-actions';
+      actions.append(
+        developmentQueueButton('Изменить', '', () => {
+          devQueueEditingId = note.id;
+          renderDevelopmentQueue();
+          document.getElementById(`devQueueEdit-${note.id}`)?.focus();
+        }, 'Изменить заметку'),
+        developmentQueueButton('Удалить', 'dev-queue-delete', () => {
+          deleteDevelopmentQueueNote(note.id);
+        }, 'Удалить заметку')
+      );
+      card.append(text, meta, actions);
+    }
+    devQueueNotesElement.appendChild(card);
+  });
+}
+
+async function loadDevelopmentQueue() {
+  if (!devQueueLoaded) setDevelopmentQueueStatus('Загружаю записи…');
+  devQueueNotesElement.setAttribute('aria-busy', 'true');
+  try {
+    const data = await developmentQueueRequest('/api/development-queue');
+    devQueueNotes = Array.isArray(data.notes) ? data.notes : [];
+    devQueueLoaded = true;
+    devQueueEditingId = null;
+    renderDevelopmentQueue();
+    setDevelopmentQueueStatus('Записи сохраняются на этом компьютере.');
+  } catch (error) {
+    setDevelopmentQueueStatus(`Не удалось загрузить очередь: ${error.message}`, 'error');
+    renderDevelopmentQueue();
+  } finally {
+    devQueueNotesElement.removeAttribute('aria-busy');
+  }
+}
+
+function openDevelopmentQueue() {
+  if (!devQueueDialog.open) devQueueDialog.showModal();
+  devQueueOpenButton.setAttribute('aria-expanded', 'true');
+  loadDevelopmentQueue();
+  requestAnimationFrame(() => devQueueDraft.focus());
+}
+
+function closeDevelopmentQueue() {
+  if (devQueueDialog.open) devQueueDialog.close();
+}
+
+devQueueDialog.addEventListener('close', () => {
+  devQueueOpenButton.setAttribute('aria-expanded', 'false');
+  devQueueEditingId = null;
+});
+devQueueDialog.addEventListener('click', event => {
+  if (event.target === devQueueDialog) closeDevelopmentQueue();
+});
+devQueueDraft.addEventListener('input', () => {
+  devQueueAddButton.disabled = devQueueSaving || !devQueueDraft.value.trim();
+});
+
+devQueueAddForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const text = devQueueDraft.value.trim();
+  if (!text) {
+    setDevelopmentQueueStatus('Введите текст записи.', 'error');
+    devQueueDraft.focus();
+    return;
+  }
+  devQueueSaving = true;
+  devQueueAddButton.disabled = true;
+  try {
+    const data = await developmentQueueRequest('/api/development-queue', {
+      method: 'POST', body: JSON.stringify({text}),
+    });
+    devQueueNotes.unshift(data.note);
+    devQueueLoaded = true;
+    devQueueDraft.value = '';
+    renderDevelopmentQueue();
+    setDevelopmentQueueStatus('Запись сохранена.', 'success');
+  } catch (error) {
+    setDevelopmentQueueStatus(`Не удалось сохранить запись: ${error.message}`, 'error');
+  } finally {
+    devQueueSaving = false;
+    devQueueAddButton.disabled = !devQueueDraft.value.trim();
+  }
+});
+
+async function updateDevelopmentQueueNote(noteId, value) {
+  const text = value.trim();
+  if (!text) {
+    setDevelopmentQueueStatus('Запись не может быть пустой.', 'error');
+    return;
+  }
+  try {
+    const data = await developmentQueueRequest(`/api/development-queue/${encodeURIComponent(noteId)}`, {
+      method: 'PATCH', body: JSON.stringify({text}),
+    });
+    devQueueNotes = devQueueNotes.map(note => note.id === noteId ? data.note : note)
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    devQueueEditingId = null;
+    renderDevelopmentQueue();
+    setDevelopmentQueueStatus('Изменения сохранены.', 'success');
+  } catch (error) {
+    setDevelopmentQueueStatus(`Не удалось изменить запись: ${error.message}`, 'error');
+  }
+}
+
+async function deleteDevelopmentQueueNote(noteId) {
+  try {
+    await developmentQueueRequest(`/api/development-queue/${encodeURIComponent(noteId)}`, {
+      method: 'DELETE',
+    });
+    devQueueNotes = devQueueNotes.filter(note => note.id !== noteId);
+    if (devQueueEditingId === noteId) devQueueEditingId = null;
+    renderDevelopmentQueue();
+    setDevelopmentQueueStatus('Запись удалена.', 'success');
+  } catch (error) {
+    setDevelopmentQueueStatus(`Не удалось удалить запись: ${error.message}`, 'error');
+  }
+}
 </script>
 
 </body>

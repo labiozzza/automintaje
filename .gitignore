@@ -5,6 +5,8 @@ montage_work/
 .DS_Store
 uploads/
 projects.json
+development_queue.sqlite3
+development_queue.sqlite3-*
 transcription_jobs/
 montage_work/
 central_work/
