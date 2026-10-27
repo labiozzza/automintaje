@@ -30,6 +30,11 @@ class HardTimeoutError(OpenCodeError):
     retryable = False
 
 
+class AgentCancelledError(OpenCodeError):
+    reason = "cancelled"
+    retryable = False
+
+
 class BudgetExhaustedError(OpenCodeError):
     reason = "budget"
     retryable = False
@@ -189,6 +194,50 @@ def terminate_active() -> None:
         procs = list(_ACTIVE_PROCS)
     for proc in procs:
         _terminate_tree(proc)
+
+
+def run_agent_command(
+    command: list[str], *, cwd: Path, timeout: float,
+    cancel_event: Optional[threading.Event] = None,
+) -> subprocess.CompletedProcess:
+    """Run a restricted OpenCode agent CLI and clean up its entire process tree."""
+    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+        proc = subprocess.Popen(
+            command,
+            cwd=cwd,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            start_new_session=True,
+        )
+        _register_proc(proc)
+        try:
+            deadline = time.monotonic() + max(1.0, float(timeout))
+            while proc.poll() is None:
+                if cancel_event is not None and cancel_event.is_set():
+                    _terminate_tree(proc)
+                    raise AgentCancelledError("Генерация остановлена пользователем")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _terminate_tree(proc)
+                    raise HardTimeoutError("OpenCode завершился по лимиту времени")
+                try:
+                    proc.wait(timeout=min(_POLL_INTERVAL, remaining))
+                except subprocess.TimeoutExpired:
+                    continue
+            stdout_file.seek(0, os.SEEK_END)
+            stdout_size = stdout_file.tell()
+            stdout_file.seek(max(0, stdout_size - 64_000))
+            stderr_file.seek(0, os.SEEK_END)
+            stderr_size = stderr_file.tell()
+            stderr_file.seek(max(0, stderr_size - _MAX_STDERR_CHARS))
+            return subprocess.CompletedProcess(
+                command,
+                int(proc.returncode or 0),
+                stdout_file.read().decode("utf-8", errors="replace"),
+                stderr_file.read().decode("utf-8", errors="replace"),
+            )
+        finally:
+            _unregister_proc(proc)
 
 
 atexit.register(terminate_active)

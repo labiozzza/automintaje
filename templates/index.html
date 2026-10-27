@@ -1138,6 +1138,27 @@ input[type="file"]::file-selector-button:hover { border-color:var(--accent); }
   .publication-queue-progress-fill { transition:none; }
   .publication-queue-progress-fill.indeterminate { animation:none; }
 }
+.elementary-form { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.elementary-form .setting-group { min-width:0; }
+.elementary-form textarea { width:100%; min-height:115px; resize:vertical; padding:11px; border:1px solid var(--border); border-radius:9px; background:var(--bg); color:var(--text); font:inherit; }
+.elementary-wide { grid-column:1/-1; }
+.elementary-progress { display:grid; gap:8px; margin-top:14px; }
+.elementary-progress[hidden],#elementaryVideoControls[hidden] { display:none; }
+.elementary-progress progress { width:100%; height:12px; accent-color:var(--accent); }
+.elementary-gallery { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-top:14px; }
+.elementary-image-card { min-width:0; overflow:hidden; border:1px solid var(--border); border-radius:11px; background:var(--surface2); }
+.elementary-image-card img { display:block; width:100%; aspect-ratio:9/16; object-fit:cover; background:var(--bg); }
+.elementary-image-select { display:flex; align-items:center; gap:8px; padding:9px; font-size:12px; }
+.elementary-image-select input,.elementary-target input { accent-color:var(--accent); }
+.elementary-targets { display:flex; flex-wrap:wrap; gap:8px 16px; margin:12px 0; }
+.elementary-target { display:flex; align-items:center; gap:7px; color:var(--text2); font-size:13px; }
+.elementary-status { color:var(--text2); font-size:13px; line-height:1.4; }
+.elementary-actions { display:flex; gap:10px; margin-top:14px; }
+.elementary-actions #elementaryGenerateButton { flex:1; width:auto; margin-top:0 !important; }
+.elementary-cancel { width:auto !important; color:#e87979; border-color:rgba(232,121,121,.45); }
+.elementary-cancel[hidden] { display:none; }
+@media (max-width:800px) { .elementary-gallery { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media (max-width:600px) { .elementary-form { grid-template-columns:1fr; } .elementary-wide { grid-column:auto; } .elementary-gallery { grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; } }
 </style>
 </head>
 <body>
@@ -1150,6 +1171,7 @@ input[type="file"]::file-selector-button:hover { border-color:var(--accent); }
     <button class="view-tab active" data-view="transcribe" onclick="switchView('transcribe')">Транскрибация</button>
     <button class="view-tab" data-view="montage" onclick="switchView('montage')">Автомонтаж</button>
     <button class="view-tab" data-view="animations" onclick="switchView('animations')">Анимации</button>
+    <button class="view-tab" data-view="elementary" onclick="switchView('elementary')">Элементарные</button>
   </div>
 
   <!-- ======== ТАБ 1: ТРАНСКРИБАЦИЯ ======== -->
@@ -1833,6 +1855,51 @@ input[type="file"]::file-selector-button:hover { border-color:var(--accent); }
     </div>
   </div>
 
+  <div id="viewElementary" class="view">
+    <section class="card" aria-labelledby="elementaryTitle">
+      <h2 class="card-title" id="elementaryTitle">Элементарные</h2>
+      <p class="toggle-desc">Сгенерируйте 10 фонов через OpenCode. Точный текст будет добавлен приложением поверх изображения.</p>
+      <div class="elementary-form">
+        <div class="setting-group elementary-wide">
+          <label for="elementaryText">Текст на изображении и идея фона</label>
+          <textarea id="elementaryText" maxlength="800" placeholder="Напишите точную фразу и опишите желаемую сцену…"></textarea>
+        </div>
+        <div class="setting-group">
+          <label for="elementaryCaption">Подпись Instagram</label>
+          <textarea id="elementaryCaption" maxlength="2000" placeholder="Подпись к публикации (необязательно)"></textarea>
+        </div>
+        <div class="setting-group">
+          <label for="elementaryYoutubeTitle">Заголовок YouTube</label>
+          <input id="elementaryYoutubeTitle" type="text" maxlength="119" placeholder="Заголовок Shorts (необязательно)">
+        </div>
+        <div class="setting-group elementary-wide">
+          <label for="elementaryReference">Референс изображения (необязательно, PNG/JPEG/WebP до 12 МБ)</label>
+          <input id="elementaryReference" type="file" accept="image/png,image/jpeg,image/webp">
+        </div>
+      </div>
+      <div class="elementary-actions">
+        <button class="btn btn-primary" id="elementaryGenerateButton" type="button" onclick="startElementaryGeneration()">Подготовить 10 вариантов</button>
+        <button class="btn elementary-cancel" id="elementaryCancelButton" type="button" onclick="cancelElementaryGeneration()" hidden>Остановить</button>
+      </div>
+      <div class="elementary-progress" id="elementaryProgress" hidden>
+        <div style="display:flex;justify-content:space-between;gap:10px"><span class="elementary-status" id="elementaryStatus" role="status" aria-live="polite"></span><strong id="elementaryPercent">0%</strong></div>
+        <progress id="elementaryProgressBar" max="100" value="0" aria-label="Прогресс генерации вариантов"></progress>
+      </div>
+      <div class="elementary-gallery" id="elementaryGallery" aria-label="Варианты изображений"></div>
+    </section>
+    <section class="card" id="elementaryVideoControls" hidden>
+      <h3 class="card-title">Видео и публикация</h3>
+      <p class="toggle-desc">Каждый выбранный вариант станет отдельным вертикальным видео длительностью 6 секунд.</p>
+      <div class="elementary-targets" aria-label="Куда добавить видео">
+        <label class="elementary-target"><input type="checkbox" value="instagram_feed" checked> Instagram Reels</label>
+        <label class="elementary-target"><input type="checkbox" value="instagram_trial"> Пробный Reels</label>
+        <label class="elementary-target"><input type="checkbox" value="youtube"> YouTube Shorts</label>
+      </div>
+      <button class="btn btn-primary" id="elementaryQueueButton" type="button" onclick="createElementaryVideos()">Создать видео и добавить в очередь</button>
+      <span class="elementary-status" id="elementaryQueueStatus" role="status" aria-live="polite" style="margin-left:10px"></span>
+    </section>
+  </div>
+
 </div>
 
 <button class="dev-queue-trigger" id="devQueueOpenButton" type="button" aria-label="Открыть очередь разработки" aria-haspopup="dialog" aria-controls="devQueueDialog" aria-expanded="false" onclick="openDevelopmentQueue()">
@@ -1910,6 +1977,9 @@ let ws = null;
 let segments = [];
 let currentTab = 'dialogue';
 let transcriptDirty = false;
+let elementaryJobId = localStorage.getItem('elementaryJobId') || '';
+let elementaryPollTimer = null;
+let selectedElementaryIndices = new Set();
 
 const SPEAKER_COLORS = ['speaker-0','speaker-1','speaker-2','speaker-3','speaker-4','speaker-5'];
 
@@ -2290,12 +2360,149 @@ function beginNewMontageInput() {
   montageUpdateProgress(0, 'idle', 'Настройте новый ролик', false);
 }
 
+async function loadElementaryJob() {
+  try {
+    if (!elementaryJobId) {
+      const response = await fetch('/api/elementary');
+      const payload = await response.json();
+      elementaryJobId = payload.jobs?.[0]?.id || '';
+      if (!elementaryJobId) return;
+      localStorage.setItem('elementaryJobId', elementaryJobId);
+    }
+    await refreshElementaryJob();
+  } catch (error) {
+    document.getElementById('elementaryStatus').textContent = error.message || 'Не удалось загрузить варианты';
+  }
+}
+
+async function refreshElementaryJob() {
+  if (!elementaryJobId) return;
+  const response = await fetch(`/api/elementary/${encodeURIComponent(elementaryJobId)}`);
+  const state = await response.json();
+  if (!response.ok) throw new Error(state.detail || `HTTP ${response.status}`);
+  renderElementaryJob(state);
+  if (['queued', 'generating', 'cancelling'].includes(state.status)) {
+    if (!elementaryPollTimer) elementaryPollTimer = setInterval(() => refreshElementaryJob().catch(() => {}), 1800);
+  } else if (elementaryPollTimer) {
+    clearInterval(elementaryPollTimer);
+    elementaryPollTimer = null;
+  }
+}
+
+function renderElementaryJob(state) {
+  const progress = document.getElementById('elementaryProgress');
+  progress.hidden = false;
+  document.getElementById('elementaryProgressBar').value = state.progress || 0;
+  document.getElementById('elementaryPercent').textContent = `${state.progress || 0}%`;
+  document.getElementById('elementaryStatus').textContent = state.error || state.detail || state.status;
+  const isGenerating = ['queued', 'generating', 'cancelling'].includes(state.status);
+  document.getElementById('elementaryGenerateButton').disabled = isGenerating;
+  const cancelButton = document.getElementById('elementaryCancelButton');
+  cancelButton.hidden = !isGenerating;
+  cancelButton.disabled = state.status === 'cancelling';
+  cancelButton.textContent = state.status === 'cancelling' ? 'Останавливаем…' : 'Остановить';
+  document.querySelectorAll('.elementary-form input, .elementary-form textarea').forEach(input => { input.disabled = isGenerating; });
+  if (state.exact_text) document.getElementById('elementaryText').value = state.exact_text;
+  if (state.caption !== undefined) document.getElementById('elementaryCaption').value = state.caption;
+  if (state.youtube_title !== undefined) document.getElementById('elementaryYoutubeTitle').value = state.youtube_title;
+  const gallery = document.getElementById('elementaryGallery');
+  gallery.innerHTML = (state.images || []).map(image => `
+    <article class="elementary-image-card">
+      <img src="${esc(image.url)}" alt="Вариант ${Number(image.index) + 1}" loading="lazy">
+      <label class="elementary-image-select"><input type="checkbox" value="${Number(image.index)}" ${selectedElementaryIndices.has(Number(image.index)) ? 'checked' : ''} onchange="toggleElementarySelection(this)"> Выбрать вариант ${Number(image.index) + 1}</label>
+    </article>`).join('');
+  document.getElementById('elementaryVideoControls').hidden = !((state.images || []).length);
+}
+
+function toggleElementarySelection(input) {
+  const index = Number(input.value);
+  if (input.checked) selectedElementaryIndices.add(index);
+  else selectedElementaryIndices.delete(index);
+}
+
+async function startElementaryGeneration() {
+  const button = document.getElementById('elementaryGenerateButton');
+  const exactText = document.getElementById('elementaryText').value;
+  if (!exactText.trim()) {
+    document.getElementById('elementaryStatus').textContent = 'Введите текст и идею фона';
+    document.getElementById('elementaryProgress').hidden = false;
+    return;
+  }
+  const form = new FormData();
+  form.append('exact_text', exactText);
+  form.append('caption', document.getElementById('elementaryCaption').value);
+  form.append('youtube_title', document.getElementById('elementaryYoutubeTitle').value);
+  const reference = document.getElementById('elementaryReference').files[0];
+  if (reference) form.append('reference', reference);
+  button.disabled = true;
+  selectedElementaryIndices.clear();
+  document.getElementById('elementaryGallery').replaceChildren();
+  document.getElementById('elementaryVideoControls').hidden = true;
+  document.getElementById('elementaryQueueStatus').textContent = '';
+  document.getElementById('elementaryProgress').hidden = false;
+  document.getElementById('elementaryStatus').textContent = 'Создаём задание…';
+  try {
+    const response = await fetch('/api/elementary/generate', {method:'POST', body:form});
+    const state = await response.json();
+    if (!response.ok) throw new Error(state.detail || `HTTP ${response.status}`);
+    elementaryJobId = state.id;
+    localStorage.setItem('elementaryJobId', elementaryJobId);
+    await refreshElementaryJob();
+  } catch (error) {
+    button.disabled = false;
+    document.getElementById('elementaryStatus').textContent = error.message || 'Не удалось начать генерацию';
+  }
+}
+
+async function cancelElementaryGeneration() {
+  const button = document.getElementById('elementaryCancelButton');
+  button.disabled = true;
+  button.textContent = 'Останавливаем…';
+  try {
+    const response = await fetch(`/api/elementary/${encodeURIComponent(elementaryJobId)}/cancel`, {method:'POST'});
+    const state = await response.json();
+    if (!response.ok) throw new Error(state.detail || `HTTP ${response.status}`);
+    renderElementaryJob(state);
+    if (!elementaryPollTimer) elementaryPollTimer = setInterval(() => refreshElementaryJob().catch(() => {}), 500);
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = 'Остановить';
+    document.getElementById('elementaryStatus').textContent = error.message || 'Не удалось остановить генерацию';
+  }
+}
+
+async function createElementaryVideos() {
+  const button = document.getElementById('elementaryQueueButton');
+  const status = document.getElementById('elementaryQueueStatus');
+  const targets = [...document.querySelectorAll('.elementary-target input:checked')].map(input => input.value);
+  if (!selectedElementaryIndices.size) { status.textContent = 'Выберите хотя бы одно изображение.'; return; }
+  if (!targets.length) { status.textContent = 'Выберите хотя бы одну цель публикации.'; return; }
+  button.disabled = true;
+  status.textContent = 'Создаём видео и добавляем публикации в очередь…';
+  try {
+    const response = await fetch(`/api/elementary/${encodeURIComponent(elementaryJobId)}/videos`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({selected_indices:[...selectedElementaryIndices], targets}),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+    const count = payload.items?.length || 0;
+    status.textContent = `Готово: ${payload.videos?.length || 0} видео, ${count} публикаций в очереди.`;
+  } catch (error) {
+    status.textContent = error.message || 'Не удалось создать видео или обновить очередь';
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function switchView(name, opts) {
   document.querySelectorAll('.view-tab').forEach(b => b.classList.toggle('active', b.dataset.view === name));
   document.getElementById('viewTranscribe').classList.toggle('active', name === 'transcribe');
   document.getElementById('viewMontage').classList.toggle('active', name === 'montage');
   document.getElementById('viewAnimations').classList.toggle('active', name === 'animations');
+  document.getElementById('viewElementary').classList.toggle('active', name === 'elementary');
   if (name === 'animations') loadAnimationEditList();
+  if (name === 'elementary') loadElementaryJob();
   if (name === 'montage') {
     if (!(opts && opts.skipRefresh)) {
       refreshMontageStatus();

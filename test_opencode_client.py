@@ -3,6 +3,7 @@ import os
 import stat
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -172,6 +173,32 @@ class FakeOpenCodeTests(unittest.TestCase):
                 break
             time.sleep(0.1)
         self.assertFalse(alive, "child process survived the timeout kill")
+
+    def test_agent_command_times_out_and_caps_captured_output(self):
+        result = oc.run_agent_command(
+            [sys.executable, "-c", "print('x' * 1000000)"],
+            cwd=Path.cwd(),
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertLessEqual(len(result.stdout), 64_000)
+        with self.assertRaises(oc.HardTimeoutError):
+            oc.run_agent_command(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                cwd=Path.cwd(),
+                timeout=0.1,
+            )
+
+    def test_agent_command_stops_process_when_cancel_event_is_set(self):
+        cancel_event = threading.Event()
+        cancel_event.set()
+        with self.assertRaises(oc.AgentCancelledError):
+            oc.run_agent_command(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                cwd=Path.cwd(),
+                timeout=60,
+                cancel_event=cancel_event,
+            )
 
 
 if __name__ == "__main__":

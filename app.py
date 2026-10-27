@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 
 import dev_queue
 import publication_queue
-import publication_queue
 
 import whisper
 from pyannote.audio import Pipeline as DiarizationPipeline
@@ -1073,10 +1072,18 @@ async def export_file(
 
 MONTAGE_WORK = BASE_DIR / "montage_work"
 MONTAGE_WORK.mkdir(exist_ok=True)
+ELEMENTARY_ROOT = MONTAGE_WORK / ".elementary"
+ELEMENTARY_ROOT.mkdir(exist_ok=True)
+ELEMENTARY_JOBS: dict[str, dict] = {}
+ELEMENTARY_TASKS: dict[str, asyncio.Task] = {}
+ELEMENTARY_CANCEL_EVENTS: dict[str, threading.Event] = {}
+ELEMENTARY_JOB_LOCK = asyncio.Lock()
 
 from montage.secrets_env import load_secrets_env
 load_secrets_env()
 from montage import engine as montage_engine
+from montage import elementary as elementary_tools
+from montage import opencode_client
 from montage.silence_trim import (
     BIN_MS as SILENCE_BIN_MS,
     MAX_CHANNELS as SILENCE_MAX_CHANNELS,
@@ -3339,8 +3346,69 @@ def _recover_montage_jobs() -> None:
     _maybe_retire_masters()
 
 
+def _elementary_job_dir(job_id: str) -> Path:
+    if not re.fullmatch(r"[a-f0-9]{32}", str(job_id)):
+        raise ValueError("Недопустимый идентификатор задания")
+    root = ELEMENTARY_ROOT.resolve()
+    directory = ELEMENTARY_ROOT / job_id
+    if directory.is_symlink() or directory.resolve(strict=False).parent != root:
+        raise ValueError("Каталог задания находится вне elementary")
+    return directory
+
+
+def _save_elementary_job(job_id: str) -> None:
+    state = ELEMENTARY_JOBS.get(job_id)
+    if not state:
+        return
+    directory = _elementary_job_dir(job_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    temporary = directory / ".state.json.tmp"
+    temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, directory / "state.json")
+
+
+def _recover_elementary_jobs() -> None:
+    for state_path in ELEMENTARY_ROOT.glob("*/state.json"):
+        job_id = state_path.parent.name
+        try:
+            directory = _elementary_job_dir(job_id)
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict) or state.get("id") != job_id:
+                continue
+            images = []
+            for item in state.get("images") or []:
+                if not isinstance(item, dict):
+                    continue
+                filename = Path(str(item.get("filename") or "")).name
+                image_path = directory / filename
+                if filename and image_path.is_file() and not image_path.is_symlink():
+                    images.append({"index": int(item.get("index", len(images))), "filename": filename})
+            state["images"] = images
+            if state.get("status") in {"queued", "generating", "cancelling"}:
+                state["status"] = "partial" if images else "cancelled"
+                state["error"] = "" if images else "Генерация прервана перезапуском сервера"
+                state["detail"] = "Генерация прервана перезапуском сервера"
+            ELEMENTARY_JOBS[job_id] = state
+            for video_job_id in state.get("video_job_ids") or []:
+                try:
+                    video_dir = _safe_montage_workdir(str(video_job_id))
+                    video_state_path = video_dir / "job_state.json"
+                    video_state = json.loads(video_state_path.read_text(encoding="utf-8"))
+                    video_path = Path(str((video_state.get("result") or {}).get("result_video") or ""))
+                    if (video_state.get("id") == video_job_id and video_state.get("kind") == "montage"
+                            and video_path.is_file() and video_dir.resolve() in video_path.resolve().parents):
+                        jobs[str(video_job_id)] = video_state
+                except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                    continue
+            if state.get("status") in {"partial", "error"} and state_path.exists():
+                _save_elementary_job(job_id)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+
+
 _recover_montage_jobs()
 _recover_transcription_projects()
+_recover_elementary_jobs()
 
 
 def _threaded_progress(loop, job_id):
@@ -4211,6 +4279,321 @@ async def ai_models_list():
     models = montage_ai_models()
     default_model = os.getenv("BIGPICKLE_MODEL", "opencode/big-pickle").strip()
     return {"available": bool(models), "models": models, "default": default_model}
+
+
+class ElementaryVideosInput(BaseModel):
+    selected_indices: list[int] = Field(..., min_length=1, max_length=elementary_tools.VARIANT_COUNT)
+    targets: list[str] = Field(..., min_length=1, max_length=3)
+
+
+def _elementary_public_state(state: dict) -> dict:
+    job_id = str(state.get("id") or "")
+    return {
+        "id": job_id,
+        "status": state.get("status", "error"),
+        "progress": int(state.get("progress") or 0),
+        "current_index": int(state.get("current_index") or 0),
+        "total": elementary_tools.VARIANT_COUNT,
+        "detail": str(state.get("detail") or ""),
+        "error": str(state.get("error") or ""),
+        "exact_text": str(state.get("exact_text") or ""),
+        "caption": str(state.get("caption") or ""),
+        "youtube_title": str(state.get("youtube_title") or ""),
+        "created_at": str(state.get("created_at") or ""),
+        "images": [
+            {
+                "index": int(image["index"]),
+                "url": f"/api/elementary/{job_id}/images/{int(image['index'])}",
+            }
+            for image in state.get("images") or []
+            if isinstance(image, dict) and "index" in image
+        ],
+    }
+
+
+async def _run_elementary_generation(job_id: str) -> None:
+    state = ELEMENTARY_JOBS[job_id]
+    directory = _elementary_job_dir(job_id)
+    cancel_event = ELEMENTARY_CANCEL_EVENTS[job_id]
+    try:
+        state.update(status="generating", progress=0, current_index=0, error="")
+        _save_elementary_job(job_id)
+        for index in range(elementary_tools.VARIANT_COUNT):
+            if cancel_event.is_set():
+                raise opencode_client.AgentCancelledError("Генерация остановлена пользователем")
+            ordinal = index + 1
+            raw_path = directory / f"raw_{ordinal:02d}.png"
+            image_path = directory / f"image_{ordinal:02d}.jpg"
+            brief_path = directory / f"brief_{ordinal:02d}.json"
+            state.update(
+                status="generating", current_index=ordinal,
+                detail=f"Генерируем вариант {ordinal} из {elementary_tools.VARIANT_COUNT}",
+                progress=round(index * 100 / elementary_tools.VARIANT_COUNT),
+            )
+            _save_elementary_job(job_id)
+            await asyncio.to_thread(
+                elementary_tools.write_brief,
+                brief_path,
+                exact_text=state["exact_text"],
+                visual_direction=state["exact_text"],
+                reference_path=(directory / state["reference_filename"])
+                if state.get("reference_filename") else None,
+                output_path=raw_path,
+                index=index,
+            )
+            await asyncio.to_thread(
+                elementary_tools.run_imagegen,
+                brief_path=brief_path,
+                output_path=raw_path,
+                reference_path=(directory / state["reference_filename"])
+                if state.get("reference_filename") else None,
+                cancel_event=cancel_event,
+            )
+            await asyncio.to_thread(
+                elementary_tools.overlay_exact_text,
+                raw_path,
+                state["exact_text"],
+                image_path,
+                variant_index=index,
+            )
+            raw_path.unlink(missing_ok=True)
+            brief_path.unlink(missing_ok=True)
+            state["images"].append({"index": index, "filename": image_path.name})
+            state.update(
+                progress=round(ordinal * 100 / elementary_tools.VARIANT_COUNT),
+                detail=f"Готово вариантов: {ordinal} из {elementary_tools.VARIANT_COUNT}",
+            )
+            _save_elementary_job(job_id)
+        if cancel_event.is_set():
+            raise opencode_client.AgentCancelledError("Генерация остановлена пользователем")
+        state.update(status="done", progress=100, detail="Готовы все 10 вариантов")
+    except opencode_client.AgentCancelledError:
+        ordinal = int(state.get("current_index") or 0)
+        if ordinal > 0:
+            (directory / f"raw_{ordinal:02d}.png").unlink(missing_ok=True)
+            (directory / f"brief_{ordinal:02d}.json").unlink(missing_ok=True)
+        state.update(status="cancelled", error="", detail="Остановлено. Готовые карточки сохранены.")
+    except asyncio.CancelledError:
+        state.update(status="cancelled", error="", detail="Остановлено. Готовые карточки сохранены.")
+        raise
+    except Exception as exc:
+        state.update(
+            status="partial" if state.get("images") else "error",
+            error=str(exc)[:800],
+            detail="Генерация остановилась; готовые варианты сохранены",
+        )
+    finally:
+        _save_elementary_job(job_id)
+        ELEMENTARY_TASKS.pop(job_id, None)
+        ELEMENTARY_CANCEL_EVENTS.pop(job_id, None)
+
+
+@app.post("/api/elementary/generate", status_code=202)
+async def start_elementary_generation(
+    request: Request,
+    exact_text: str = Form(..., min_length=1, max_length=800),
+    caption: str = Form("", max_length=2000),
+    youtube_title: str = Form("", max_length=119),
+    reference: Optional[UploadFile] = File(None),
+):
+    _require_loopback_development_queue(request)
+    if not exact_text.strip():
+        raise HTTPException(400, "Введите точный текст для изображения")
+    async with ELEMENTARY_JOB_LOCK:
+        if any(item.get("status") in {"queued", "generating", "cancelling"} for item in ELEMENTARY_JOBS.values()):
+            raise HTTPException(409, "Дождитесь завершения текущей генерации")
+        job_id = uuid.uuid4().hex
+        directory = _elementary_job_dir(job_id)
+        directory.mkdir(parents=True, exist_ok=False)
+        reference_filename = ""
+        if reference is not None and reference.filename:
+            contents = await reference.read(elementary_tools.MAX_REFERENCE_BYTES + 1)
+            if len(contents) > elementary_tools.MAX_REFERENCE_BYTES:
+                shutil.rmtree(directory, ignore_errors=True)
+                raise HTTPException(413, "Референс должен быть не больше 12 МБ")
+            temporary_reference = directory / "reference.upload"
+            temporary_reference.write_bytes(contents)
+            try:
+                _width, _height, image_format = elementary_tools.validate_reference(temporary_reference)
+            except ValueError as exc:
+                shutil.rmtree(directory, ignore_errors=True)
+                raise HTTPException(400, str(exc)) from exc
+            reference_filename = f"reference.{image_format}"
+            temporary_reference.replace(directory / reference_filename)
+        state = {
+            "id": job_id,
+            "status": "queued",
+            "progress": 0,
+            "current_index": 0,
+            "exact_text": exact_text,
+            "caption": caption,
+            "youtube_title": youtube_title,
+            "reference_filename": reference_filename,
+            "images": [],
+            "error": "",
+            "detail": "Задание добавлено",
+            "created_at": datetime.now().isoformat(),
+        }
+        ELEMENTARY_JOBS[job_id] = state
+        ELEMENTARY_CANCEL_EVENTS[job_id] = threading.Event()
+        _save_elementary_job(job_id)
+        ELEMENTARY_TASKS[job_id] = asyncio.create_task(_run_elementary_generation(job_id))
+    return _elementary_public_state(state)
+
+
+@app.get("/api/elementary")
+async def list_elementary_jobs(request: Request):
+    _require_loopback_development_queue(request)
+    recent = sorted(ELEMENTARY_JOBS.values(), key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return {"jobs": [_elementary_public_state(item) for item in recent[:20]]}
+
+
+@app.get("/api/elementary/{job_id}")
+async def get_elementary_job(job_id: str, request: Request):
+    _require_loopback_development_queue(request)
+    state = ELEMENTARY_JOBS.get(job_id)
+    if state is None:
+        raise HTTPException(404, "Задание «Элементарные» не найдено")
+    return _elementary_public_state(state)
+
+
+@app.post("/api/elementary/{job_id}/cancel", status_code=202)
+async def cancel_elementary_job(job_id: str, request: Request):
+    _require_loopback_development_queue(request)
+    state = ELEMENTARY_JOBS.get(job_id)
+    if state is None:
+        raise HTTPException(404, "Задание «Элементарные» не найдено")
+    if state.get("status") == "cancelling":
+        return _elementary_public_state(state)
+    if state.get("status") not in {"queued", "generating"}:
+        raise HTTPException(409, "Генерация уже завершена")
+    cancel_event = ELEMENTARY_CANCEL_EVENTS.get(job_id)
+    if cancel_event is None:
+        state.update(status="cancelled", error="", detail="Остановлено пользователем")
+    else:
+        cancel_event.set()
+        state.update(status="cancelling", detail="Останавливаем генерацию…")
+    _save_elementary_job(job_id)
+    return _elementary_public_state(state)
+
+
+@app.get("/api/elementary/{job_id}/images/{index}")
+async def get_elementary_image(job_id: str, index: int, request: Request):
+    _require_loopback_development_queue(request)
+    state = ELEMENTARY_JOBS.get(job_id)
+    if state is None:
+        raise HTTPException(404, "Задание «Элементарные» не найдено")
+    image = next((item for item in state.get("images") or [] if int(item.get("index", -1)) == index), None)
+    if image is None:
+        raise HTTPException(404, "Вариант изображения не найден")
+    directory = _elementary_job_dir(job_id)
+    filename = Path(str(image.get("filename") or "")).name
+    image_path = directory / filename
+    if not filename or not image_path.is_file() or image_path.is_symlink():
+        raise HTTPException(404, "Файл изображения недоступен")
+    return FileResponse(image_path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.post("/api/elementary/{job_id}/videos", status_code=201)
+async def create_elementary_videos(job_id: str, payload: ElementaryVideosInput, request: Request):
+    _require_loopback_development_queue(request)
+    state = ELEMENTARY_JOBS.get(job_id)
+    if state is None or state.get("status") not in {"done", "partial", "cancelled"}:
+        raise HTTPException(409, "Сначала дождитесь готовых вариантов")
+    selected_indices = list(dict.fromkeys(payload.selected_indices))
+    images_by_index = {int(item["index"]): item for item in state.get("images") or []}
+    if any(index not in images_by_index for index in selected_indices):
+        raise HTTPException(400, "Один или несколько выбранных вариантов недоступны")
+    targets = list(dict.fromkeys(payload.targets))
+    allowed_targets = {"instagram_trial", "instagram_feed", "youtube"}
+    if not targets or any(target not in allowed_targets for target in targets):
+        raise HTTPException(400, "Выберите Instagram Reels, пробный Reels или YouTube Shorts")
+    title = str(state.get("youtube_title") or "").strip()[:119]
+    caption = str(state.get("caption") or "").strip()[:2000]
+    display_title = title or caption or str(state.get("exact_text") or "Элементарные")[:2000]
+    elementary_dir = _elementary_job_dir(job_id)
+    generated: list[dict] = []
+    rendered_paths: list[Path] = []
+    for index in selected_indices:
+        image = images_by_index[index]
+        image_path = elementary_dir / Path(str(image.get("filename") or "")).name
+        video_job_id = f"el_{job_id}_{index + 1:02d}"
+        video_dir = _safe_montage_workdir(video_job_id)
+        video_dir.mkdir(parents=True, exist_ok=True)
+        video_path = video_dir / "elementary.mp4"
+        job = jobs.get(video_job_id)
+        reusable = bool(
+            job and job.get("kind") == "montage"
+            and str((job.get("result") or {}).get("result_video") or "") == str(video_path.resolve())
+            and video_path.is_file()
+        )
+        if not reusable:
+            try:
+                await asyncio.to_thread(elementary_tools.render_video, image_path, video_path)
+            except Exception as exc:
+                for path in rendered_paths:
+                    path.unlink(missing_ok=True)
+                    jobs.pop(path.parent.name, None)
+                    (path.parent / "job_state.json").unlink(missing_ok=True)
+                raise HTTPException(500, str(exc)[:800]) from exc
+            rendered_paths.append(video_path)
+            job = {
+                "id": video_job_id,
+                "kind": "montage",
+                "original_name": f"Элементарные {index + 1:02d}.mp4",
+                "video_path": str(video_path.resolve()),
+                "upload_path": str(video_path.resolve()),
+                "status": "done",
+                "progress": 100,
+                "stage": "done",
+                "phase": "ready",
+                "detail": "Короткое видео создано из изображения «Элементарные»",
+                "created_at": datetime.now().isoformat(),
+                "result": {"job_id": video_job_id, "result_video": str(video_path.resolve())},
+                "params": {},
+                "publish_prep": {},
+                "publish_status": {},
+                "publish_errors": {},
+                "publish_unknown": {},
+                "publish_progress": {},
+                "covers": [],
+                "cancel_requested": False,
+                "elementary_source": {"job_id": job_id, "image_index": index},
+            }
+            jobs[video_job_id] = job
+            _save_montage_job(video_job_id)
+        generated.append({"video_job_id": video_job_id, "image_index": index})
+
+    state["video_job_ids"] = list(dict.fromkeys([
+        *(state.get("video_job_ids") or []),
+        *(item["video_job_id"] for item in generated),
+    ]))
+    _save_elementary_job(job_id)
+
+    queue_rows = []
+    try:
+        for video in generated:
+            video_job_id = video["video_job_id"]
+            items = []
+            for target_id in targets:
+                platform = "youtube" if target_id == "youtube" else "instagram"
+                item = await asyncio.to_thread(
+                    publication_queue.enqueue,
+                    request_id=f"elementary:{job_id}:{video['image_index']}:{target_id}",
+                    job_id=video_job_id,
+                    platform=platform,
+                    target_ids=[target_id],
+                    display_title=display_title,
+                    youtube_title=title or display_title[:119],
+                    instagram_caption=caption,
+                )
+                items.append(_publication_queue_item_view(item))
+            video["items"] = items
+            queue_rows.extend(items)
+    except (ValueError, sqlite3.Error, OSError) as exc:
+        raise HTTPException(503, f"Видео сохранены, но очередь обновилась не полностью: {exc}") from exc
+    _wake_publication_queue()
+    return {"videos": generated, "items": queue_rows}
 
 
 @app.get("/api/montage/status")
