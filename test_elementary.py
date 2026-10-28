@@ -45,6 +45,8 @@ class ElementaryToolsTests(unittest.TestCase):
         brief = json.loads(brief_path.read_text(encoding="utf-8"))
         self.assertEqual(brief["exact_overlay_text"], "Точная фраза!")
         self.assertEqual(brief["output_path"], str(output.resolve()))
+        self.assertEqual(brief["platform_safe_zone"]["x_percent"], [12, 88])
+        self.assertIn("diagram", brief["requirements"][4])
         self.assertTrue(any("Do not draw any text" in item for item in brief["requirements"]))
 
     def test_each_variant_has_its_own_art_direction(self):
@@ -126,6 +128,9 @@ class ElementaryToolsTests(unittest.TestCase):
         self.assertIn("любое неверное движение", items[1])
         self.assertEqual(cta, "Про инвестиции расскажу в следующем рилсе, подписывайся")
         self.assertEqual([elementary._memory_label(item, i)[1] for i, item in enumerate(items)], ["more", "equal", "less"])
+        visual_aid = elementary._visual_aid_guidance(text)
+        self.assertIn("balanced scale", visual_aid)
+        self.assertIn("bars", visual_aid)
 
     def test_ten_foreground_layouts_are_visually_distinct(self):
         source = self.root / "background.png"
@@ -136,10 +141,10 @@ class ElementaryToolsTests(unittest.TestCase):
         background.save(source)
         text = (
             "База финансовой грамотности\n"
-            "Если тратишь больше чем получаешь — проблемы\n"
-            "Если тратишь столько же сколько получаешь — равновесие\n"
-            "Если тратишь меньше чем получаешь — изобилие\n"
-            "Подписывайся"
+            "Если за тратишь больше чем получаешь – ты на уровне финансовых проблем\n"
+            "Если ты тратишь столько же сколько получаешь, то ты на уровне финансового равновесия. Он плох тем что любое неверное движение возвращает тебя на уровень финансовых проблем\n"
+            "Если ты тратишь меньше чем получаешь, то ты находишься на уровне финансового изобилия и только тогда тебе нужно думать про инвестиции\n"
+            "Про инвестиции я буду говорить следующим рилсе, подписывайся"
         )
         previews = []
         for index in range(10):

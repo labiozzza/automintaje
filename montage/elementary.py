@@ -203,6 +203,25 @@ def _memory_label(text: str, index: int) -> tuple[str, str, tuple[int, int, int]
     return f"КЛЮЧЕВОЙ ПУНКТ {index + 1}", "", ((103, 87, 190), (38, 135, 151), (207, 145, 42), (45, 145, 107))[index % 4]
 
 
+def _visual_aid_guidance(text: str) -> str:
+    _title, items, _cta = _memory_card_content(text)
+    kinds = {_memory_label(item, index)[1] for index, item in enumerate(items)}
+    if kinds == {"more", "equal", "less"}:
+        return (
+            "The topic compares spending with income. Add a clear nonverbal infographic metaphor: "
+            "one set of expense/income bars with expenses higher, one balanced scale, and one with income higher; "
+            "use small coin, scale, or plant symbols, never written labels or numbers."
+        )
+    lowered = text.lower()
+    if any(word in lowered for word in ("если", "когда", "иначе", "сначала", "затем")):
+        return "Turn the ideas into a simple visual flow or branching decision diagram using arrows, shapes, and small icons, without words or numbers."
+    if any(word in lowered for word in ("рост", "увелич", "процент", "сравн", "больше", "меньше")):
+        return "Use a small, accurate comparison or trend graphic with shapes/bars/arrows that makes the relationship intuitive, without labels or numbers."
+    if any(word in lowered for word in ("шаг", "этап", "способ", "правил")):
+        return "Use a compact step-by-step visual with distinct icons linked by a clear path; do not draw labels or numbers."
+    return "Choose one strong visual metaphor for the main idea; add a small diagram, sequence, or comparison only if it genuinely improves understanding, not as decoration."
+
+
 def _draw_lines(draw, text: str, font, x: int, y: int, max_width: int, line_height: int, fill, align="left") -> tuple[int, list[str]]:
     lines = _wrap_lines(text, font, draw, max_width)
     for line in lines:
@@ -215,16 +234,16 @@ def _draw_lines(draw, text: str, font, x: int, y: int, max_width: int, line_heig
 
 
 _VARIANT_LAYOUTS = (
-    {"name": "paper", "blur": 10, "brightness": .58, "tint": (28, 26, 43, 48), "page": (250, 248, 242, 255), "inset": 48, "row": "light", "badge": "circle", "radius": 38, "title": (31, 34, 46, 255), "text": (45, 47, 57, 255), "accents": ((207, 82, 75), (207, 145, 42), (45, 145, 107)), "eyebrow": (232, 227, 250, 255), "eyebrow_text": (89, 69, 164, 255), "cta": (236, 229, 255, 255), "cta_text": (79, 58, 151, 255), "header": "pill", "align": "left", "offset": 0},
-    {"name": "night", "blur": 3, "brightness": .34, "tint": (11, 17, 39, 118), "page": (17, 23, 43, 255), "inset": 34, "row": "dark", "badge": "square", "radius": 22, "title": (247, 248, 255, 255), "text": (238, 242, 250, 255), "accents": ((255, 116, 105), (255, 202, 87), (78, 225, 190)), "eyebrow": (35, 48, 75, 255), "eyebrow_text": (119, 223, 240, 255), "cta": (40, 55, 82, 255), "cta_text": (147, 234, 214, 255), "header": "bar", "align": "left", "offset": 0},
-    {"name": "signal", "blur": 0, "brightness": .82, "tint": (255, 208, 45, 56), "page": None, "inset": 30, "row": "accent", "badge": "symbol", "radius": 12, "title": (34, 36, 48, 255), "text": (255, 255, 255, 255), "accents": ((220, 76, 67), (45, 102, 186), (39, 143, 93)), "eyebrow": (255, 242, 198, 255), "eyebrow_text": (89, 63, 24, 255), "cta": (255, 239, 190, 255), "cta_text": (63, 48, 30, 255), "header": "bar", "align": "center", "offset": 0},
-    {"name": "offset", "blur": 18, "brightness": .68, "tint": (88, 28, 67, 56), "page": (255, 249, 244, 255), "inset": 56, "row": "tint", "badge": "giant", "radius": 34, "title": (56, 31, 49, 255), "text": (53, 43, 54, 255), "accents": ((191, 64, 88), (195, 132, 37), (52, 137, 113)), "eyebrow": (250, 223, 226, 255), "eyebrow_text": (135, 50, 77, 255), "cta": (249, 222, 230, 255), "cta_text": (120, 43, 76, 255), "header": "vertical", "align": "left", "offset": 34},
-    {"name": "blueprint", "blur": 6, "brightness": .30, "tint": (7, 31, 71, 148), "page": (12, 39, 75, 255), "inset": 30, "row": "outline", "badge": "square", "radius": 8, "title": (237, 247, 255, 255), "text": (229, 241, 255, 255), "accents": ((75, 202, 255), (255, 205, 89), (124, 237, 178)), "eyebrow": (19, 68, 109, 255), "eyebrow_text": (119, 223, 255, 255), "cta": (18, 69, 104, 255), "cta_text": (167, 235, 255, 255), "header": "bar", "align": "left", "offset": 0},
-    {"name": "photo-essay", "blur": 15, "brightness": .39, "tint": (12, 16, 29, 96), "page": None, "inset": 48, "row": "dark", "badge": "circle", "radius": 30, "title": (255, 255, 255, 255), "text": (246, 246, 246, 255), "accents": ((255, 117, 79), (255, 198, 81), (94, 217, 167)), "eyebrow": (49, 51, 61, 255), "eyebrow_text": (255, 215, 157, 255), "cta": (56, 50, 73, 255), "cta_text": (238, 214, 255, 255), "header": "pill", "align": "center", "offset": 0},
-    {"name": "mint", "blur": 22, "brightness": .83, "tint": (84, 181, 145, 62), "page": (224, 246, 237, 255), "inset": 18, "row": "light", "badge": "bar", "radius": 42, "title": (25, 74, 62, 255), "text": (38, 64, 56, 255), "accents": ((210, 83, 73), (201, 139, 44), (32, 132, 100)), "eyebrow": (190, 231, 214, 255), "eyebrow_text": (27, 106, 81, 255), "cta": (192, 232, 214, 255), "cta_text": (27, 97, 76, 255), "header": "vertical", "align": "left", "offset": 0},
-    {"name": "sunburst", "blur": 2, "brightness": .76, "tint": (255, 158, 26, 68), "page": (255, 219, 89, 255), "inset": 28, "row": "accent", "badge": "none", "radius": 4, "title": (48, 38, 29, 255), "text": (42, 37, 33, 255), "accents": ((200, 66, 51), (50, 106, 179), (39, 133, 82)), "eyebrow": (51, 44, 38, 255), "eyebrow_text": (255, 235, 191, 255), "cta": (48, 43, 40, 255), "cta_text": (255, 234, 184, 255), "header": "bar", "align": "left", "offset": 0},
-    {"name": "mono", "blur": 26, "brightness": .76, "tint": (238, 237, 229, 100), "page": (249, 248, 242, 255), "inset": 68, "row": "outline", "badge": "giant", "radius": 0, "title": (20, 22, 25, 255), "text": (24, 25, 28, 255), "accents": ((198, 52, 57), (32, 37, 43), (54, 119, 109)), "eyebrow": (28, 30, 34, 255), "eyebrow_text": (255, 255, 255, 255), "cta": (221, 218, 209, 255), "cta_text": (30, 32, 35, 255), "header": "line", "align": "left", "offset": 0},
-    {"name": "collage", "blur": 8, "brightness": .61, "tint": (87, 42, 135, 75), "page": (242, 226, 250, 255), "inset": 38, "row": "tint", "badge": "symbol", "radius": 16, "title": (50, 34, 83, 255), "text": (49, 42, 61, 255), "accents": ((211, 72, 91), (219, 144, 38), (44, 141, 137)), "eyebrow": (218, 197, 237, 255), "eyebrow_text": (92, 57, 131, 255), "cta": (221, 200, 241, 255), "cta_text": (78, 50, 122, 255), "header": "pill", "align": "center", "offset": 22},
+    {"name": "paper", "blur": 10, "brightness": .58, "tint": (28, 26, 43, 48), "page": (250, 248, 242, 255), "inset": 72, "row": "light", "badge": "circle", "radius": 38, "title": (31, 34, 46, 255), "text": (45, 47, 57, 255), "accents": ((207, 82, 75), (207, 145, 42), (45, 145, 107)), "eyebrow": (232, 227, 250, 255), "eyebrow_text": (89, 69, 164, 255), "cta": (236, 229, 255, 255), "cta_text": (79, 58, 151, 255), "header": "pill", "align": "left", "offset": 0},
+    {"name": "night", "blur": 3, "brightness": .34, "tint": (11, 17, 39, 118), "page": (17, 23, 43, 255), "inset": 64, "row": "dark", "badge": "square", "radius": 22, "title": (247, 248, 255, 255), "text": (238, 242, 250, 255), "accents": ((255, 116, 105), (255, 202, 87), (78, 225, 190)), "eyebrow": (35, 48, 75, 255), "eyebrow_text": (119, 223, 240, 255), "cta": (40, 55, 82, 255), "cta_text": (147, 234, 214, 255), "header": "bar", "align": "left", "offset": 0},
+    {"name": "signal", "blur": 0, "brightness": .82, "tint": (255, 208, 45, 56), "page": None, "inset": 84, "row": "accent", "badge": "symbol", "radius": 12, "title": (34, 36, 48, 255), "text": (255, 255, 255, 255), "accents": ((220, 76, 67), (45, 102, 186), (39, 143, 93)), "eyebrow": (255, 242, 198, 255), "eyebrow_text": (89, 63, 24, 255), "cta": (255, 239, 190, 255), "cta_text": (63, 48, 30, 255), "header": "bar", "align": "center", "offset": 0},
+    {"name": "offset", "blur": 18, "brightness": .68, "tint": (88, 28, 67, 56), "page": (255, 249, 244, 255), "inset": 72, "row": "tint", "badge": "giant", "radius": 34, "title": (56, 31, 49, 255), "text": (53, 43, 54, 255), "accents": ((191, 64, 88), (195, 132, 37), (52, 137, 113)), "eyebrow": (250, 223, 226, 255), "eyebrow_text": (135, 50, 77, 255), "cta": (249, 222, 230, 255), "cta_text": (120, 43, 76, 255), "header": "vertical", "align": "left", "offset": 34},
+    {"name": "blueprint", "blur": 6, "brightness": .30, "tint": (7, 31, 71, 148), "page": (12, 39, 75, 255), "inset": 64, "row": "outline", "badge": "square", "radius": 8, "title": (237, 247, 255, 255), "text": (229, 241, 255, 255), "accents": ((75, 202, 255), (255, 205, 89), (124, 237, 178)), "eyebrow": (19, 68, 109, 255), "eyebrow_text": (119, 223, 255, 255), "cta": (18, 69, 104, 255), "cta_text": (167, 235, 255, 255), "header": "bar", "align": "left", "offset": 0},
+    {"name": "photo-essay", "blur": 1, "brightness": .92, "tint": (251, 166, 76, 38), "page": None, "inset": 84, "row": "accent", "badge": "none", "radius": 2, "title": (38, 32, 29, 255), "text": (255, 255, 255, 255), "accents": ((194, 63, 48), (42, 96, 174), (31, 131, 79)), "eyebrow": (255, 248, 230, 255), "eyebrow_text": (85, 59, 35, 255), "cta": (255, 247, 224, 255), "cta_text": (63, 46, 35, 255), "header": "bar", "align": "left", "offset": 0},
+    {"name": "mint", "blur": 22, "brightness": .83, "tint": (84, 181, 145, 62), "page": (224, 246, 237, 255), "inset": 60, "row": "light", "badge": "bar", "radius": 42, "title": (25, 74, 62, 255), "text": (38, 64, 56, 255), "accents": ((210, 83, 73), (201, 139, 44), (32, 132, 100)), "eyebrow": (190, 231, 214, 255), "eyebrow_text": (27, 106, 81, 255), "cta": (192, 232, 214, 255), "cta_text": (27, 97, 76, 255), "header": "vertical", "align": "left", "offset": 0},
+    {"name": "sunburst", "blur": 2, "brightness": .76, "tint": (255, 158, 26, 68), "page": (255, 219, 89, 255), "inset": 72, "row": "accent", "badge": "none", "radius": 4, "title": (48, 38, 29, 255), "text": (42, 37, 33, 255), "accents": ((200, 66, 51), (50, 106, 179), (39, 133, 82)), "eyebrow": (51, 44, 38, 255), "eyebrow_text": (255, 235, 191, 255), "cta": (48, 43, 40, 255), "cta_text": (255, 234, 184, 255), "header": "bar", "align": "left", "offset": 0},
+    {"name": "mono", "blur": 26, "brightness": .76, "tint": (238, 237, 229, 100), "page": (249, 248, 242, 255), "inset": 72, "row": "outline", "badge": "giant", "radius": 0, "title": (20, 22, 25, 255), "text": (24, 25, 28, 255), "accents": ((198, 52, 57), (32, 37, 43), (54, 119, 109)), "eyebrow": (28, 30, 34, 255), "eyebrow_text": (255, 255, 255, 255), "cta": (221, 218, 209, 255), "cta_text": (30, 32, 35, 255), "header": "line", "align": "left", "offset": 0},
+    {"name": "collage", "blur": 4, "brightness": .28, "tint": (48, 9, 90, 132), "page": (35, 18, 67, 255), "inset": 72, "row": "accent", "badge": "symbol", "radius": 8, "title": (252, 245, 255, 255), "text": (255, 255, 255, 255), "accents": ((255, 72, 150), (208, 235, 63), (47, 221, 208)), "eyebrow": (79, 33, 111, 255), "eyebrow_text": (251, 202, 255, 255), "cta": (63, 31, 94, 255), "cta_text": (250, 215, 255, 255), "header": "bar", "align": "center", "offset": 22},
 )
 
 
@@ -250,9 +269,9 @@ def overlay_exact_text(source: Path, text: str, output: Path, *, variant_index: 
     draw = ImageDraw.Draw(background, "RGBA")
     card_left, card_right = theme["inset"], VIDEO_WIDTH - theme["inset"]
     card_width = card_right - card_left
-    page_margin = 30 if theme["page"] is None else (24 if theme["name"] in {"mint", "sunburst"} else 42)
+    page_margin = 60 if theme["page"] is None else 72
     inner_left, inner_width = card_left + page_margin, card_width - page_margin * 2
-    top = 48 if theme["name"] in {"photo-essay", "sunburst"} else 66
+    top = 235
     title_size = (78 if len(title) < 45 else 62) if theme["name"] in {"sunburst", "mono"} else (66 if len(title) < 45 else 56)
     title_font = _font(title_size)
     title_lines = _wrap_lines(title, title_font, draw, inner_width - 40)
@@ -260,18 +279,18 @@ def overlay_exact_text(source: Path, text: str, output: Path, *, variant_index: 
     body_size = 35 if len(items) <= 3 else 30
     body_line_height = body_size + 13
     label_font = _font(19 if theme["name"] in {"mono", "sunburst"} else 21)
-    number_font = _font(88 if theme["badge"] == "giant" else (70 if theme["badge"] == "symbol" else 30))
+    number_font = _font(76 if theme["badge"] == "giant" else (64 if theme["badge"] == "symbol" else 30))
     summary_font = _font(18)
     cta_font = _font(27)
     body_indent = {"circle": 126, "square": 126, "giant": 154, "symbol": 154, "bar": 48, "none": 36}[theme["badge"]]
-    body_top_offset = {"circle": 69, "square": 69, "giant": 119, "symbol": 119, "bar": 62, "none": 62}[theme["badge"]]
+    body_top_offset = {"circle": 69, "square": 69, "giant": 102, "symbol": 102, "bar": 62, "none": 62}[theme["badge"]]
     row_widths = [inner_width - (theme["offset"] if index % 2 else 0) for index in range(len(items))]
     financial_sequence = len(items) == 3 and {
         _memory_label(item, i)[1] for i, item in enumerate(items)
     } == {"more", "equal", "less"}
 
     # Shrink body type as needed so every original sentence remains on the card.
-    max_content_bottom = VIDEO_HEIGHT - 100
+    max_content_bottom = VIDEO_HEIGHT - 330
     while body_size >= 24:
         body_font = _font(body_size)
         body_line_height = body_size + 13
@@ -282,7 +301,7 @@ def overlay_exact_text(source: Path, text: str, output: Path, *, variant_index: 
         needed = top + 54 + len(title_lines) * title_line_height + 36
         needed += sum(card_heights) + max(0, len(card_heights) - 1) * 18
         if financial_sequence:
-            needed += 104
+            needed += 150
         if cta:
             needed += max(110, len(_wrap_lines(cta, cta_font, draw, inner_width - 64)) * 36 + 58)
         if needed <= max_content_bottom:
@@ -389,20 +408,25 @@ def overlay_exact_text(source: Path, text: str, output: Path, *, variant_index: 
     if financial_sequence:
         summary_y = y - 1
         chips = [
-            ("БОЛЬШЕ → ПРОБЛЕМЫ", (207, 82, 75)),
-            ("РАВНО → РАВНОВЕСИЕ", (207, 145, 42)),
-            ("МЕНЬШЕ → ИЗОБИЛИЕ", (45, 145, 107)),
+            ("БОЛЬШЕ", "ПРОБЛЕМЫ", (54, 30), (207, 82, 75)),
+            ("РАВНО", "РАВНОВЕСИЕ", (42, 42), (207, 145, 42)),
+            ("МЕНЬШЕ", "ИЗОБИЛИЕ", (28, 56), (45, 145, 107)),
         ]
         chip_gap = 10
         chip_width = (inner_width - chip_gap * 2) // 3
-        for i, (chip_text, color) in enumerate(chips):
+        chip_height = 116
+        for i, (relation, outcome, bar_heights, color) in enumerate(chips):
             left = inner_left + i * (chip_width + chip_gap)
             tint = tuple(int(channel * 0.12 + 255 * 0.88) for channel in color)
-            draw.rounded_rectangle((left, summary_y, left + chip_width, summary_y + 62), radius=20, fill=(*tint, 255), outline=(*color, 160), width=2)
-            chip_lines = _wrap_lines(chip_text, summary_font, draw, chip_width - 18)
-            line_y = summary_y + (62 - len(chip_lines) * 23) // 2
-            _draw_lines(draw, chip_text, summary_font, left + 9, line_y, chip_width - 18, 23, (*color, 255), align="center")
-        y += 82
+            draw.rounded_rectangle((left, summary_y, left + chip_width, summary_y + chip_height), radius=20, fill=(*tint, 255), outline=(*color, 180), width=2)
+            base_y = summary_y + 89
+            draw.line((left + 12, base_y, left + 65, base_y), fill=(104, 119, 138, 255), width=2)
+            first_height, second_height = bar_heights
+            draw.rounded_rectangle((left + 19, base_y - first_height, left + 37, base_y), radius=4, fill=(*color, 255))
+            draw.rounded_rectangle((left + 43, base_y - second_height, left + 61, base_y), radius=4, fill=(102, 139, 178, 255))
+            draw.text((left + 77, summary_y + 29), relation, font=summary_font, fill=(*color, 255))
+            draw.text((left + 77, summary_y + 54), outcome, font=label_font, fill=(42, 45, 54, 255))
+        y += chip_height + 18
 
     if cta:
         cta_lines = _wrap_lines(cta, cta_font, draw, inner_width - 74)
@@ -450,11 +474,18 @@ def render_video(image_path: Path, output_path: Path, *, duration: int = VIDEO_S
 
 def write_brief(path: Path, *, exact_text: str, visual_direction: str, reference_path: Optional[Path], output_path: Path, index: int) -> Path:
     """Write a bounded, server-owned brief consumed as untrusted agent input."""
+    visual_aid = _visual_aid_guidance(visual_direction)
     payload = {
         "index": int(index),
         "variant_number": int(index) + 1,
         "art_direction": _VARIANT_ART_DIRECTIONS[int(index) % len(_VARIANT_ART_DIRECTIONS)],
         "visual_direction": str(visual_direction),
+        "visual_aid": visual_aid,
+        "platform_safe_zone": {
+            "x_percent": [12, 88],
+            "y_percent": [14, 85],
+            "note": "Keep the central card area low-detail and clear. Reels/Shorts interface controls cover the outer right edge, top bar, and lower caption area.",
+        },
         "exact_overlay_text": str(exact_text),
         "reference_image_path": str(Path(reference_path).resolve()) if reference_path else None,
         "output_path": str(Path(output_path).resolve()),
@@ -463,6 +494,8 @@ def write_brief(path: Path, *, exact_text: str, visual_direction: str, reference
             "Make this variant composition and art medium strongly different from every other variant in the batch, not just a minor color change.",
             "Follow the supplied art_direction for this variant; vary medium, palette, camera angle, focal object, and composition while preserving the user's concept.",
             "Use visual_direction as scene guidance and the reference only as visual inspiration.",
+            "Do not make a blank background or a plain text poster. Include a situation-appropriate illustration or visual aid from visual_aid; use a flow, comparison, simple chart, or icon diagram when it clarifies the idea.",
+            "Compose the supporting illustration around the platform_safe_zone so app text remains centered, readable, and clear of Reels/Shorts controls.",
             "Do not draw any text, lettering, logos, captions, or watermarks.",
             "The application will add exact_overlay_text locally after generation.",
             "Save the image only to output_path.",
