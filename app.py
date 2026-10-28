@@ -1,4 +1,5 @@
 import os, json, uuid, asyncio, subprocess, time, re, tempfile, hashlib, urllib.request, importlib, threading, gc, math, io, sys, secrets, sqlite3, ipaddress
+import copy
 import shutil
 import traceback
 import urllib.parse
@@ -1084,6 +1085,8 @@ load_secrets_env()
 from montage import engine as montage_engine
 from montage import elementary as elementary_tools
 from montage import opencode_client
+from motion.api import router as motion_router
+from motion.service import MotionError, MotionService
 from montage.silence_trim import (
     BIN_MS as SILENCE_BIN_MS,
     MAX_CHANNELS as SILENCE_MAX_CHANNELS,
@@ -2591,6 +2594,235 @@ def _prep_source_video(job: dict, mirrored: bool) -> Optional[Path]:
         return None
     path = Path(str(path))
     return path if path.is_file() else None
+
+
+def _resolve_motion_source(source_job_id: str, source_kind: str) -> dict:
+    job = jobs.get(str(source_job_id))
+    if not isinstance(job, dict) or job.get("kind") != "montage":
+        raise MotionError("Исходный монтаж не найден", 404)
+    if job.get("status") != "done" or not isinstance(job.get("result"), dict):
+        raise MotionError("Motion доступен только после завершения автомонтажа", 409)
+    result = job["result"]
+    master = _master_video_path(job)
+    delivery = Path(str(result.get("result_video") or ""))
+    if master is None and str(result.get("master_mode") or "") == "inplace":
+        master_name = Path(str(result.get("master_video") or "")).name
+        if master_name and master_name == delivery.name:
+            master = delivery
+    def usable_source(path):
+        return bool(path and not path.is_symlink() and path.is_file() and montage_engine.usable_video(path))
+
+    if source_kind == "master":
+        if not usable_source(master):
+            raise MotionError("Мастер-файл монтажа недоступен", 409)
+        path, selected_kind = master, "master"
+    elif source_kind == "delivery":
+        path, selected_kind = delivery, "delivery"
+    else:
+        if usable_source(master):
+            path, selected_kind = master, "master"
+        else:
+            path, selected_kind = delivery, "delivery_fallback"
+    if not usable_source(path):
+        raise MotionError("Готовый видеофайл недоступен или повреждён", 409)
+    transcript_job = jobs.get(str(job.get("transcript_job_id") or "")) or {}
+    transcript_segments = transcript_job.get("result")
+    timeline = result.get("timeline") or {}
+    silence = timeline.get("silence_trim") or result.get("silence_trim") or {}
+    render_input_path = ""
+    render_params = {}
+    overlay_root = ""
+    mirror_source_available = False
+    if job.get("origin") != "motion_graphics_plus":
+        raw_input = Path(str(job.get("video_path") or ""))
+        if raw_input.is_file() and not raw_input.is_symlink():
+            resolved_input = raw_input.resolve()
+            source_workdir = _safe_montage_workdir(source_job_id).resolve()
+            allowed_roots = [UPLOAD_DIR.resolve(), source_workdir]
+            if any(root == resolved_input.parent or root in resolved_input.parents for root in allowed_roots):
+                render_input_path = str(resolved_input)
+                render_params = copy.deepcopy(job.get("params") or {})
+                overlay_root = str((source_workdir / "overlays").resolve())
+                mirror_source_available = True
+    return {
+        "path": str(path.resolve()),
+        "source_kind": selected_kind,
+        "original_name": str(job.get("original_name") or source_job_id),
+        "srt_text": str(job.get("srt_text") or ""),
+        "transcript_segments": transcript_segments if isinstance(transcript_segments, list) else None,
+        "transcript_job_id": str(job.get("transcript_job_id") or ""),
+        "timeline_segments": list(silence.get("timeline_segments") or []),
+        "params": dict(job.get("params") or {}),
+        "render_input_path": render_input_path,
+        "render_params": render_params,
+        "overlay_root": overlay_root,
+        "motion_mirror_source_available": mirror_source_available,
+        "audio_censor_srt": str(job.get("audio_censor_srt") or ""),
+        "result": result,
+    }
+
+
+def _register_motion_output_job(job: dict) -> str:
+    job_id = str(job.get("id") or "")
+    workdir = _safe_montage_workdir(job_id)
+    existing = jobs.get(job_id)
+    if existing is not None and existing.get("origin") != "motion_graphics_plus":
+        raise ValueError("Motion output job id already exists")
+    result = job.get("result") or {}
+    for key in ("result_video", "preview_video", "master_video"):
+        value = result.get(key)
+        if not value:
+            continue
+        path = Path(str(value))
+        # Motion jobs follow the montage contract: master_video is stored as
+        # a basename and resolved under the job workdir by _master_video_path.
+        if key == "master_video" and not path.is_absolute():
+            path = workdir / path
+        if path.is_symlink() or not path.is_file() or workdir.resolve() not in path.resolve().parents:
+            raise ValueError("Motion output artifact is outside its registered workdir")
+    jobs[job_id] = job
+    _save_montage_job(job_id)
+    return job_id
+
+
+def _motion_output_lookup(job_id: str) -> Optional[dict]:
+    job = jobs.get(str(job_id))
+    return job if isinstance(job, dict) and job.get("origin") == "motion_graphics_plus" else None
+
+
+def _motion_output_save(job: dict) -> None:
+    job_id = str(job.get("id") or "")
+    if not job_id or job.get("origin") != "motion_graphics_plus":
+        raise ValueError("Not a Motion output job")
+    jobs[job_id] = job
+    _save_montage_job(job_id)
+
+
+def _motion_mirror_signature(job: dict) -> str:
+    return _mirrored_variant_signature(job)
+
+
+async def _render_motion_mirrored_base(project: dict, cancel_event: threading.Event, progress_cb) -> dict:
+    project_id = str(project.get("id") or "")
+    project_dir = MONTAGE_WORK / ".motion" / "projects" / project_id
+    relative = Path(str(project.get("mirror_source_snapshot") or ""))
+    if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeError("Motion-проект не содержит snapshot исходника для отражённого рендера")
+    input_path = project_dir / relative
+    if input_path.is_symlink() or not input_path.is_file():
+        raise RuntimeError("Закреплённый исходник для отражённой версии недоступен")
+    from motion.source_snapshot import verify_snapshot
+    await asyncio.to_thread(
+        verify_snapshot, input_path, str(project.get("mirror_source_sha256") or ""),
+        int(project.get("mirror_source_size_bytes") or 0),
+    )
+    temporary_id = "mrb_" + uuid.uuid4().hex
+    temporary_dir = _safe_montage_workdir(temporary_id)
+    temporary_dir.mkdir(parents=True, exist_ok=False)
+    mirror_assets_root = (project_dir / "mirror_input").resolve()
+    params = copy.deepcopy(project.get("mirror_render_params") or {})
+    overlays = []
+    for index, overlay in enumerate(params.get("overlays") or []):
+        if not isinstance(overlay, dict) or str(overlay.get("kind") or "") != "image":
+            overlays.append(overlay)
+            continue
+        image_ref = Path(str(overlay.get("image_path") or ""))
+        if image_ref.is_absolute() or ".." in image_ref.parts:
+            shutil.rmtree(temporary_dir, ignore_errors=True)
+            raise RuntimeError("Некорректная ссылка на Motion overlay asset")
+        source_image = (project_dir / "mirror_input" / image_ref).resolve()
+        try:
+            source_image.relative_to(mirror_assets_root)
+        except ValueError as exc:
+            shutil.rmtree(temporary_dir, ignore_errors=True)
+            raise RuntimeError("Motion overlay asset вышел за пределы snapshot") from exc
+        if source_image.is_symlink() or not source_image.is_file():
+            shutil.rmtree(temporary_dir, ignore_errors=True)
+            raise RuntimeError("Motion overlay asset отсутствует")
+        overlay_dir = temporary_dir / "overlays"
+        overlay_dir.mkdir(parents=True, exist_ok=True)
+        staged = overlay_dir / ("overlay_%02d%s" % (index + 1, source_image.suffix.lower()))
+        try:
+            os.link(str(source_image), str(staged), follow_symlinks=False)
+        except OSError:
+            shutil.copy2(source_image, staged)
+        staged_overlay = dict(overlay)
+        staged_overlay["image_path"] = str(staged)
+        overlays.append(staged_overlay)
+    if "overlays" in params:
+        params["overlays"] = overlays
+    temporary_job = {
+        "id": temporary_id,
+        "kind": "motion_mirror_work",
+        "original_name": str(project.get("source_name") or "source.mp4"),
+        "video_path": str(input_path.resolve()),
+        "srt_text": str(project.get("srt_text") or ""),
+        "params": params,
+        "audio_censor_srt": str(project.get("audio_censor_srt") or ""),
+        "cancel_requested": False,
+    }
+    jobs[temporary_id] = temporary_job
+    stop_watcher = threading.Event()
+
+    async def mirror_cancel_watcher():
+        while not stop_watcher.is_set():
+            if cancel_event.is_set():
+                temporary_job["cancel_requested"] = True
+                return
+            await asyncio.sleep(0.1)
+
+    watcher = asyncio.create_task(mirror_cancel_watcher())
+    try:
+        path, _alternate_options = await _render_mirrored_variant(
+            temporary_id,
+            progress_cb=lambda percent, _stage, detail: progress_cb(
+                8.0 + min(38.0, float(percent or 0) * 0.38),
+                "Отражённая основа: " + str(detail or "рендер"),
+            ),
+        )
+        if cancel_event.is_set():
+            raise RuntimeError("Подготовка отражённой версии отменена")
+        return {"video_path": str(path.resolve()), "temporary_dir": str(temporary_dir)}
+    except Exception:
+        shutil.rmtree(temporary_dir, ignore_errors=True)
+        raise
+    finally:
+        stop_watcher.set()
+        watcher.cancel()
+        try:
+            await watcher
+        except asyncio.CancelledError:
+            pass
+        jobs.pop(temporary_id, None)
+
+
+motion_service = MotionService(
+    work_root=MONTAGE_WORK,
+    project_root=BASE_DIR,
+    source_resolver=_resolve_motion_source,
+    model_list=lambda: montage_ai_models(),
+    output_register=_register_motion_output_job,
+    video_response=_video_response,
+    mirror_base_renderer=_render_motion_mirrored_base,
+    output_lookup=_motion_output_lookup,
+    output_save=_motion_output_save,
+    mirror_signature=_motion_mirror_signature,
+)
+app.state.motion_service = motion_service
+app.include_router(motion_router)
+
+
+@app.on_event("startup")
+async def _recover_motion_projects_and_outputs() -> None:
+    try:
+        await asyncio.to_thread(motion_service.startup)
+    except Exception as exc:
+        print("[motion] recovery failed: %s" % type(exc).__name__, file=sys.stderr)
+
+
+@app.on_event("shutdown")
+async def _stop_motion_services() -> None:
+    await motion_service.shutdown()
 
 
 def _prepared_video_entry(job: dict, purpose: str, mirrored: bool) -> Optional[dict]:
@@ -5015,7 +5247,7 @@ async def start_montage(
     subtitles: bool = Form(True),
     bigpickle: bool = Form(True),
     ai_model: str = Form(""),
-    edge_mode: str = Form("scale"),
+    edge_mode: str = Form("clamp"),
     animation_id: str = Form(""),
     animation_start: float = Form(0.0),
     animation_offset_x: int = Form(0),

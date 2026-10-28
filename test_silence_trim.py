@@ -192,6 +192,37 @@ class FfmpegCutIntegrationTests(unittest.TestCase):
             self.assertAlmostEqual(int(video["nb_frames"]) / 25.0, metadata["output_duration_ms"] / 1000.0, delta=1 / 25)
             self.assertLess(abs(int(video["nb_frames"]) / 25.0 - float(audio["duration"])), 1 / 48000 + 0.002)
 
+    def test_cut_ending_at_analyzed_duration_clips_to_normalized_master_frames(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "source.mp4"
+            subprocess.run([
+                shutil.which("ffmpeg"), "-v", "error", "-y",
+                "-f", "lavfi", "-i", "color=c=blue:s=64x64:r=30:d=2",
+                "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=2",
+                "-map", "0:v:0", "-map", "1:a:0", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-t", "2", str(source),
+            ], check=True, capture_output=True)
+            from montage import engine
+            output, metadata = engine._apply_silence_edl(
+                source,
+                Path(temp),
+                {
+                    "silence_trim_enabled": True,
+                    "silence_source_duration_ms": 2001,
+                    "silence_cuts": [{
+                        "cut_id": "tail", "start_ms": 1500, "end_ms": 2001, "origin": "auto",
+                    }],
+                },
+                job_id="silence-tail-boundary",
+                duration=2.001,
+                progress_cb=lambda *_: None,
+                cancel_cb=lambda: False,
+                log_cb=lambda *_: None,
+            )
+            self.assertTrue(metadata["applied"])
+            self.assertEqual(metadata["removed_duration_ms"], 500)
+            self.assertEqual(metadata["output_duration_ms"], 1500)
+
     def test_vfr_master_is_normalized_before_cut_snap(self):
         with tempfile.TemporaryDirectory() as temp:
             source = Path(temp) / "vfr-source.mp4"

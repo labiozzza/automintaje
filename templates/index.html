@@ -10,6 +10,7 @@
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/static/icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+<link rel="stylesheet" href="/static/motion/motion.css">
 <title>Transcriber</title>
 <style>
 @font-face { font-family: 'ComfortaaPreview'; src: url('/font-assets/Comfortaa.ttf') format('truetype'); font-display: swap; }
@@ -1170,6 +1171,7 @@ input[type="file"]::file-selector-button:hover { border-color:var(--accent); }
   <div class="view-tabs">
     <button class="view-tab active" data-view="transcribe" onclick="switchView('transcribe')">Транскрибация</button>
     <button class="view-tab" data-view="montage" onclick="switchView('montage')">Автомонтаж</button>
+    <button class="view-tab" data-view="motion" onclick="switchView('motion')">Motion Graphics Plus</button>
     <button class="view-tab" data-view="animations" onclick="switchView('animations')">Анимации</button>
     <button class="view-tab" data-view="elementary" onclick="switchView('elementary')">Элементарные</button>
   </div>
@@ -1553,7 +1555,7 @@ input[type="file"]::file-selector-button:hover { border-color:var(--accent); }
             <label>Режим краёв при зуме</label>
             <select id="montageEdgeMode">
               <option value="reflect">Отражение</option>
-              <option value="scale" selected>Масштаб</option>
+              <option value="clamp" selected>Без полей — кадр в границах исходника</option>
             </select>
           </div>
         </div>
@@ -1744,6 +1746,7 @@ input[type="file"]::file-selector-button:hover { border-color:var(--accent); }
 
           <div class="card-title" style="margin-top:20px">Публикация</div>
           <button class="btn btn-primary" id="openPublishWindowBtn" disabled onclick="openPublishWindow()">Открыть окно публикации</button>
+          <button class="btn" id="launchMotionBtn" type="button" disabled onclick="window.MotionUI && window.MotionUI.openFromMontage()" style="margin-left:8px">Передать Motion-режиссёру</button>
           <div class="publish-results" id="montagePublishResults"></div>
 
           <div class="card-title" style="margin-top:20px">Подготовка к публикации</div>
@@ -1753,61 +1756,126 @@ input[type="file"]::file-selector-button:hover { border-color:var(--accent); }
       </div>
     </section>
 
-    <div class="publish-modal" id="montagePublishModal" onclick="if(event.target===this) closePublishWindow()">
-      <div class="publish-dialog" role="dialog" aria-modal="true" aria-labelledby="publishDialogTitle">
-        <div class="publish-dialog-head">
-          <h2 id="publishDialogTitle">Публикация ролика</h2>
-          <button class="publish-close" type="button" aria-label="Закрыть" onclick="closePublishWindow()">×</button>
+  </div> <!-- /viewMontage -->
+
+  <div class="publish-modal" id="montagePublishModal" onclick="if(event.target===this) closePublishWindow()">
+    <div class="publish-dialog" role="dialog" aria-modal="true" aria-labelledby="publishDialogTitle">
+      <div class="publish-dialog-head">
+        <h2 id="publishDialogTitle">Публикация ролика</h2>
+        <button class="publish-close" type="button" aria-label="Закрыть" onclick="closePublishWindow()">×</button>
+      </div>
+      <div class="publish-target-grid">
+        <label class="publish-target"><input type="checkbox" class="publish-target-checkbox" value="instagram_trial"> Instagram пробное</label>
+        <label class="publish-target"><input type="checkbox" class="publish-target-checkbox publish-mirror-target" value="instagram_trial_mirrored"> Instagram пробное перевёрнутое</label>
+        <label class="publish-target"><input type="checkbox" class="publish-target-checkbox" value="instagram_feed"> Instagram основная лента</label>
+        <label class="publish-target"><input type="checkbox" class="publish-target-checkbox publish-mirror-target" value="instagram_feed_mirrored"> Instagram основная лента перевёрнутое</label>
+        <label class="publish-target"><input type="checkbox" class="publish-target-checkbox" value="youtube"> YouTube</label>
+        <label class="publish-target"><input type="checkbox" class="publish-target-checkbox publish-mirror-target" value="youtube_mirrored"> YouTube перевёрнутое</label>
+      </div>
+      <div class="error-box" id="montageMirrorPublishNotice" style="display:none"></div>
+      <div class="publish-preview-video"><video id="publishContextVideo" controls playsinline preload="metadata"></video></div>
+      <div class="publish-field">
+        <div class="publish-field-head"><label for="montagePublishTitle">Название видео / заголовок YouTube</label><span id="montagePublishTitleCount">0 / 119</span></div>
+        <input id="montagePublishTitle" maxlength="119" placeholder="Можно оставить пустым — возьмём из подписи или имени файла" oninput="updatePublishCounts()">
+      </div>
+      <div class="publish-field">
+        <div class="publish-field-head"><label for="montagePublishText">Текст для Instagram</label><span id="montagePublishTextCount">0 / 2000</span></div>
+        <textarea id="montagePublishText" maxlength="2000" rows="6" placeholder="Подпись к публикации" oninput="updatePublishCounts()"></textarea>
+      </div>
+      <div class="publish-field">
+        <div class="publish-field-head"><span>Обложка</span><span>выберите одну</span></div>
+        <div class="cover-status" id="montageCoverStatus">Обложки не создавались</div>
+        <div class="cover-grid" id="montageCoverGrid"></div>
+        <div class="cover-tools">
+          <label class="btn" style="text-align:center;cursor:pointer">Загрузить свою<input id="montageCoverUpload" type="file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="uploadMontageCover()"></label>
+          <button class="btn" type="button" onclick="toggleStopFrameCover()">Выбрать стоп-кадр</button>
         </div>
-        <div class="publish-target-grid">
-          <label class="publish-target"><input type="checkbox" class="publish-target-checkbox" value="instagram_trial"> Instagram пробное</label>
-          <label class="publish-target"><input type="checkbox" class="publish-target-checkbox publish-mirror-target" value="instagram_trial_mirrored"> Instagram пробное перевёрнутое</label>
-          <label class="publish-target"><input type="checkbox" class="publish-target-checkbox" value="instagram_feed"> Instagram основная лента</label>
-          <label class="publish-target"><input type="checkbox" class="publish-target-checkbox publish-mirror-target" value="instagram_feed_mirrored"> Instagram основная лента перевёрнутое</label>
-          <label class="publish-target"><input type="checkbox" class="publish-target-checkbox" value="youtube"> YouTube</label>
-          <label class="publish-target"><input type="checkbox" class="publish-target-checkbox publish-mirror-target" value="youtube_mirrored"> YouTube перевёрнутое</label>
-        </div>
-        <div class="error-box" id="montageMirrorPublishNotice" style="display:none"></div>
-        <div class="publish-field">
-          <div class="publish-field-head"><label for="montagePublishTitle">Название видео / заголовок YouTube</label><span id="montagePublishTitleCount">0 / 119</span></div>
-          <input id="montagePublishTitle" maxlength="119" placeholder="Можно оставить пустым — возьмём из подписи или имени файла" oninput="updatePublishCounts()">
-        </div>
-        <div class="publish-field">
-          <div class="publish-field-head"><label for="montagePublishText">Текст для Instagram</label><span id="montagePublishTextCount">0 / 2000</span></div>
-          <textarea id="montagePublishText" maxlength="2000" rows="6" placeholder="Подпись к публикации" oninput="updatePublishCounts()"></textarea>
-        </div>
-        <div class="publish-field">
-          <div class="publish-field-head"><span>Обложка</span><span>выберите одну</span></div>
-          <div class="cover-status" id="montageCoverStatus">Обложки не создавались</div>
-          <div class="cover-grid" id="montageCoverGrid"></div>
-          <div class="cover-tools">
-            <label class="btn" style="text-align:center;cursor:pointer">Загрузить свою<input id="montageCoverUpload" type="file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="uploadMontageCover()"></label>
-            <button class="btn" type="button" onclick="toggleStopFrameCover()">Выбрать стоп-кадр</button>
-          </div>
-          <div id="montageStopFrameTools" style="display:none;margin-top:12px">
-            <div class="publish-field-head"><label for="montageCoverTime">Стоп-кадр</label><span id="montageCoverTimeLabel">00:00.000</span></div>
-            <input id="montageCoverTime" type="range" min="0" max="1" step="0.1" value="0" oninput="previewCoverFrame()" style="width:100%">
-            <input id="montageCoverTitle" maxlength="100" placeholder="Название на обложке" style="margin-top:10px">
-            <button class="btn btn-primary" type="button" id="generateCoverBtn" style="margin-top:10px" onclick="generateStopFrameCover()">Создать локально</button>
-          </div>
-        </div>
-        <div class="toggle-desc" style="margin-top:12px">Порядок Instagram: пробное → пробное перевёрнутое → основная лента → основная лента перевёрнутое. Для Instagram и YouTube действует отдельный интервал очереди.</div>
-        <div class="error-box" id="montagePublishError"></div>
-        <div class="publication-queue-notice" id="publicationQueueNotice" role="status" aria-live="polite" hidden>
-          <span id="publicationQueueNoticeText"></span>
-          <button class="btn" type="button" onclick="openPublicationQueue()">Открыть очередь</button>
-        </div>
-        <div class="publish-live-progress" id="montagePublishLiveProgress"></div>
-        <div class="publish-results" id="montagePublishModalResults"></div>
-        <div class="publish-actions">
-          <button class="btn" type="button" id="montageNewPublishBtn" style="display:none" onclick="startNewPublication()">Новая публикация</button>
-          <button class="btn" type="button" onclick="closePublishWindow()">Отмена</button>
-          <button class="btn btn-primary" id="montagePublishBtn" type="button" onclick="publishMontage()">Добавить в очередь</button>
+        <div id="montageStopFrameTools" style="display:none;margin-top:12px">
+          <div class="publish-field-head"><label for="montageCoverTime">Стоп-кадр</label><span id="montageCoverTimeLabel">00:00.000</span></div>
+          <input id="montageCoverTime" type="range" min="0" max="1" step="0.1" value="0" oninput="previewCoverFrame()" style="width:100%">
+          <input id="montageCoverTitle" maxlength="100" placeholder="Название на обложке" style="margin-top:10px">
+          <button class="btn btn-primary" type="button" id="generateCoverBtn" style="margin-top:10px" onclick="generateStopFrameCover()">Создать локально</button>
         </div>
       </div>
+      <div class="toggle-desc" style="margin-top:12px">Порядок Instagram: пробное → пробное перевёрнутое → основная лента → основная лента перевёрнутое. Для Instagram и YouTube действует отдельный интервал очереди.</div>
+      <div class="error-box" id="montagePublishError"></div>
+      <div class="publication-queue-notice" id="publicationQueueNotice" role="status" aria-live="polite" hidden>
+        <span id="publicationQueueNoticeText"></span>
+        <button class="btn" type="button" onclick="openPublicationQueue()">Открыть очередь</button>
+      </div>
+      <div class="publish-live-progress" id="montagePublishLiveProgress"></div>
+      <div class="publish-results" id="montagePublishModalResults"></div>
+      <div class="publish-actions">
+        <button class="btn" type="button" id="montageNewPublishBtn" style="display:none" onclick="startNewPublication()">Новая публикация</button>
+        <button class="btn" type="button" onclick="closePublishWindow()">Отмена</button>
+        <button class="btn btn-primary" id="montagePublishBtn" type="button" onclick="publishMontage()">Добавить в очередь</button>
+      </div>
     </div>
-    <div class="cover-zoom" id="montageCoverZoom" onclick="this.classList.remove('active')"><img id="montageCoverZoomImage" alt="Обложка крупно"></div>
-  </div> <!-- /viewMontage -->
+  </div>
+  <div class="cover-zoom" id="montageCoverZoom" onclick="this.classList.remove('active')"><img id="montageCoverZoomImage" alt="Обложка крупно"></div>
+
+  <div id="viewMotion" class="view">
+    <div class="motion-page">
+      <section class="motion-topbar card">
+        <div>
+          <div class="motion-eyebrow">POST-PRODUCTION · MOTION DIRECTOR</div>
+          <h2>Motion Graphics Plus</h2>
+          <p class="toggle-desc">Смысловая графика поверх готового монтажа. Исходный ролик и его публикации не меняются.</p>
+        </div>
+        <div class="motion-project-pick">
+          <label for="motionProjectSelect">Motion-проект</label>
+          <select id="motionProjectSelect"><option value="">Выберите или создайте проект</option></select>
+          <button class="btn" type="button" id="motionReloadButton">Обновить</button>
+        </div>
+      </section>
+
+      <section class="motion-workspace">
+        <div class="motion-main-column">
+          <article class="card motion-source-card">
+            <div class="motion-card-head"><div><h3>Исходный монтаж</h3><span id="motionSourceMeta" class="toggle-desc">Выберите готовый ролик</span></div><span id="motionProjectStatus" class="motion-status-pill">Нет проекта</span></div>
+            <video id="motionSourceVideo" controls playsinline preload="metadata"></video>
+            <div class="motion-transport-row"><span id="motionSourceDuration"></span><button class="btn btn-small" type="button" id="motionCompareButton" disabled>До / после</button></div>
+            <div class="motion-preview-wrap" id="motionPreviewWrap" hidden><span class="motion-scene-caption">Предпросмотр выбранных сцен</span><video id="motionOutputVideo" controls playsinline preload="metadata"></video></div>
+          </article>
+
+          <article class="card motion-scenes-card">
+          <div class="motion-card-head"><div><h3>Раскадровка</h3><span id="motionRevisionLabel" class="toggle-desc">Сцены появятся после анализа</span></div><div class="motion-review-actions"><button class="btn btn-small" type="button" id="motionPreviewButton" disabled>Предпросмотр</button><button class="btn btn-small" type="button" id="motionApproveButton" disabled>Утвердить план</button><button class="btn btn-small btn-primary" type="button" id="motionRenderButton" disabled>Рендер финального видео</button></div></div>
+            <div id="motionTimeline" class="motion-timeline" aria-label="Таймлайн сцен"></div>
+            <div id="motionSceneList" class="motion-scene-list"><div class="motion-empty">Создайте Motion-проект из готового монтажа, чтобы начать.</div></div>
+          </article>
+
+          <article class="card motion-output-card" id="motionOutputCard" hidden>
+            <div class="motion-card-head"><div><h3>Motion-версия</h3><span id="motionOutputMeta" class="toggle-desc"></span></div></div>
+            <video id="motionFinalVideo" controls playsinline preload="metadata"></video>
+            <div class="motion-output-actions"><a id="motionDownloadLink" class="btn" href="#" download>Скачать</a><button id="motionPublishButton" class="btn btn-primary" type="button">Открыть окно публикации</button></div>
+            <div class="motion-mirror-tools"><button id="motionMirrorButton" class="btn" type="button">Подготовить отражённую Motion-версию</button><span id="motionMirrorStatus" class="toggle-desc"></span></div>
+          </article>
+        </div>
+
+        <aside class="card motion-director-panel">
+          <div class="motion-card-head"><div><h3>Motion Director</h3><span class="toggle-desc">Запускается через OpenCode</span></div><span id="motionOpenCodeStatus" class="motion-status-dot">Проверка…</span></div>
+          <label for="motionModelSelect">Модель OpenCode</label>
+          <select id="motionModelSelect"><option value="">Выберите модель</option></select>
+          <label for="motionStyleSelect">Стиль</label>
+          <select id="motionStyleSelect"><option value="minimal">Minimal</option><option value="financial">Financial</option><option value="tech-ui">Tech UI</option><option value="editorial">Editorial</option><option value="custom">Custom</option></select>
+          <label for="motionIntensitySelect">Интенсивность</label>
+          <select id="motionIntensitySelect"><option value="minimal">Минимальная</option><option value="balanced" selected>Сбалансированная</option><option value="expressive">Выразительная</option></select>
+          <label for="motionIntentInput">Пожелания к графике</label>
+          <textarea id="motionIntentInput" rows="3" maxlength="2000" placeholder="Что важно объяснить? Чего не закрывать? Какие бренд-правила учесть?"></textarea>
+          <div class="motion-director-actions"><button class="btn btn-primary" id="motionDesignButton" type="button" disabled>Разработать графику</button><button class="btn motion-stop-button" id="motionCancelButton" type="button" hidden>Остановить</button></div>
+          <div class="motion-progress" id="motionProgress" hidden><progress id="motionProgressBar" max="100" value="0"></progress><span id="motionProgressLabel" role="status" aria-live="polite"></span></div>
+          <div class="motion-message-form"><label for="motionMessageInput">Правка или уточнение</label><textarea id="motionMessageInput" rows="3" maxlength="4000" placeholder="Например: сделай сравнение проще и не перекрывай лицо"></textarea><button class="btn" id="motionSendMessageButton" type="button" disabled>Отправить режиссёру</button></div>
+          <div class="motion-history" id="motionHistory" aria-live="polite"></div>
+          <div id="motionError" class="motion-error" role="alert" hidden></div>
+        </aside>
+      </section>
+
+      <section class="card motion-source-selector">
+        <div class="motion-card-head"><div><h3>Выбрать готовый монтаж</h3><span class="toggle-desc">Графика создаётся как производная версия, без повторного монтажа исходника.</span></div></div>
+        <div class="motion-source-select-row"><select id="motionSourceSelect"><option value="">Загрузка готовых монтажей…</option></select><button class="btn btn-primary" id="motionCreateProjectButton" type="button" disabled>Создать Motion-проект</button></div>
+      </section>
+    </div>
+  </div> <!-- /viewMotion -->
 
   <div id="viewAnimations" class="view">
       <div class="card">
@@ -2287,6 +2355,10 @@ function showError(msg) {
 
 // ========== АВТОМОНТАЖ ==========
 let montageJobId = localStorage.getItem('montageJobId');
+window.getActiveMontageJobId = () => montageJobId;
+const publishDraftsByJob = new Map();
+let activePublishContext = null;
+let publishContextPollTimer = null;
 let montageActive = false;
 let transcriptJobId = null;
 let montageWs = null;
@@ -2328,11 +2400,9 @@ function clearMontageOutput(clearJob = false) {
   video.removeAttribute('src');
   video.dataset.job = '';
   video.load();
-  window.__coverState = {};
-  window.__montageCovers = [];
-  window.__selectedCoverId = '';
   window.__publishFieldsRestored = false;
-  window.__forceNewPublication = false;
+  publishDraftsByJob.delete(montageJobId);
+  if (activePublishContext && activePublishContext.source === 'montage') activePublishContext = null;
   window.__opsState = {};
   window.__opsBodySig = null;
   renderOperations({});
@@ -2356,6 +2426,8 @@ function activateMontageJob(jobId) {
 function beginNewMontageInput() {
   montageInputDirty = true;
   clearMontageOutput(true);
+  const motionButton = document.getElementById('launchMotionBtn');
+  if (motionButton) motionButton.disabled = true;
   resetSilenceEditor(true);
   montageUpdateProgress(0, 'idle', 'Настройте новый ролик', false);
 }
@@ -2499,10 +2571,12 @@ function switchView(name, opts) {
   document.querySelectorAll('.view-tab').forEach(b => b.classList.toggle('active', b.dataset.view === name));
   document.getElementById('viewTranscribe').classList.toggle('active', name === 'transcribe');
   document.getElementById('viewMontage').classList.toggle('active', name === 'montage');
+  document.getElementById('viewMotion').classList.toggle('active', name === 'motion');
   document.getElementById('viewAnimations').classList.toggle('active', name === 'animations');
   document.getElementById('viewElementary').classList.toggle('active', name === 'elementary');
   if (name === 'animations') loadAnimationEditList();
   if (name === 'elementary') loadElementaryJob();
+  if (name === 'motion' && window.MotionUI) window.MotionUI.load();
   if (name === 'montage') {
     if (!(opts && opts.skipRefresh)) {
       refreshMontageStatus();
@@ -3739,7 +3813,7 @@ document.addEventListener('change', (e) => {
   }
   if (e.target && e.target.classList && e.target.classList.contains('publish-target-checkbox')) {
     const publishButton = document.getElementById('montagePublishBtn');
-    if (window.__forceNewPublication) {
+    if (activePublishContext?.draft?.forceNew) {
       const anyChecked = document.querySelectorAll('.publish-target-checkbox:not(:disabled):checked').length > 0;
       publishButton.disabled = !anyChecked;
       publishButton.textContent = 'Добавить в очередь';
@@ -5485,16 +5559,17 @@ function montageUpdateProgress(progress, stage, detail, refreshAfterTerminal = t
   }
 }
 
-function mirrorVariantReady() {
-  const vs = window.__opsState && window.__opsState.variants;
+function mirrorVariantReady(data) {
+  const vs = (data || window.__opsState || {}).variants;
   return !!(vs && vs.mirrored_ready);
 }
 
 function applyMirrorVariantState(data) {
   const info = document.getElementById('montageMirrorVariantInfo');
   const notice = document.getElementById('montageMirrorPublishNotice');
-  const mv = (data && data.mirror_variant) || (window.__opsState && window.__opsState.mirror_variant) || null;
-  const ready = !!(data && data.variants && data.variants.mirrored_ready) || mirrorVariantReady();
+  const state = data || window.__opsState || {};
+  const mv = state.mirror_variant || null;
+  const ready = !!(state.variants && state.variants.mirrored_ready) || mirrorVariantReady(state);
   const status = mv && mv.status ? mv.status : (ready ? 'done' : 'idle');
   if (info) {
     if (status === 'generating') info.textContent = 'Отражённая версия (мастер): рендер… ' + Math.round(Number(mv && mv.progress) || 0) + '%';
@@ -5558,6 +5633,7 @@ async function refreshMontageResult() {
     }
     const data = await res.json();
     if (requestedJobId !== montageJobId) return;
+    const modalContextMatches = !!(activePublishContext && activePublishContext.jobId === requestedJobId);
     mergeOpsState(data);
     updateCancelBtn(data);
     montageUpdateProgress(data.progress || 0, data.stage || data.status, data.detail || '', false);
@@ -5565,7 +5641,7 @@ async function refreshMontageResult() {
     if (data.selected_cover_id && !window.__selectedCoverId) {
       window.__selectedCoverId = data.selected_cover_id;
     }
-    if (!window.__publishFieldsRestored && data.last_publish_targets && data.last_publish_targets.length) {
+    if (!modalContextMatches && !window.__publishFieldsRestored && data.last_publish_targets && data.last_publish_targets.length) {
       const previous = data.last_publish_targets;
       const title = previous.find(target => target.title)?.title || '';
       const text = previous.find(target => target.text || target.caption);
@@ -5574,9 +5650,11 @@ async function refreshMontageResult() {
       window.__publishFieldsRestored = true;
       updatePublishCounts();
     }
-    renderCoverState(data);
-    applyMirrorVariantState(data);
-    applyPrepareState(data);
+    if (modalContextMatches) {
+      renderCoverState(data);
+      applyMirrorVariantState(data);
+      applyPrepareState(data);
+    }
     document.getElementById('montageStartBtn').disabled = true;
     const terminalFailure = data.status === 'error' || data.status === 'failed' || data.status === 'interrupted';
     if (terminalFailure) {
@@ -5598,6 +5676,8 @@ async function refreshMontageResult() {
         montageActive = true;
       }
       document.getElementById('montageResultsCard').classList.add('active');
+      const motionButton = document.getElementById('launchMotionBtn');
+      if (motionButton) motionButton.disabled = !['done', 'completed'].includes(data.status);
       const info = document.getElementById('montageResultInfo');
       const size = Math.round((data.result.video_size || 0) / 1048576);
       info.textContent = `${data.result.job_id} • ${data.result.duration ? Math.round(data.result.duration) + 's' : ''}`;
@@ -5667,12 +5747,15 @@ async function refreshMontageResult() {
         tlBox.textContent = 'Нет данных о таймлайне';
       }
     }
-    if (data.publish_progress) renderPublishProgress(data.publish_progress);
-    if (data.publish && !window.__forceNewPublication) {
+    if (data.publish_progress && modalContextMatches) {
+      activePublishContext.resultState = data;
+      renderPublishProgress(data.publish_progress);
+    }
+    if (data.publish) {
       const box = document.getElementById('montagePublishResults');
-      const modalBox = document.getElementById('montagePublishModalResults');
+      const modalBox = modalContextMatches ? document.getElementById('montagePublishModalResults') : null;
       box.innerHTML = '';
-      modalBox.innerHTML = '';
+      if (modalBox) modalBox.innerHTML = '';
       for (const [kind, r] of Object.entries(data.publish)) {
         const url = r.permalink || (r.watch_url || r.shorts_url) || r.thread_id || `message_id=${r.message_id}`;
         const row = url
@@ -5682,40 +5765,41 @@ async function refreshMontageResult() {
           ? ` <span class="badge up">архив сохранён</span>`
           : (r.archive_error ? ` <span class="badge no" title="${esc(r.archive_error)}">ошибка архива</span>` : '');
         box.innerHTML += row.replace('</div>', `${archive}</div>`);
-        modalBox.innerHTML += row.replace('</div>', `${archive}</div>`);
+        if (modalBox) modalBox.innerHTML += row.replace('</div>', `${archive}</div>`);
       }
       for (const [kind, message] of Object.entries(data.publish_errors || {})) {
         const row = `<div><span class="badge no">${esc(kind)}: ошибка</span> ${esc(message)}</div>`;
         box.innerHTML += row;
-        modalBox.innerHTML += row;
+        if (modalBox) modalBox.innerHTML += row;
       }
       for (const [kind, message] of Object.entries(data.publish_unknown || {})) {
         const row = `<div><span class="badge warn">${esc(kind)}: нужна ручная проверка</span> ${esc(message)}</div>`;
         box.innerHTML += row;
-        modalBox.innerHTML += row;
+        if (modalBox) modalBox.innerHTML += row;
       }
-      window.__publishFailed = Object.keys(data.publish_errors || {});
-      window.__publishUnknown = Object.keys(data.publish_unknown || {});
-      window.__publishPublished = Object.keys(data.publish || {});
-      markPublishedTargets();
-      if (data.status !== 'publishing') {
-        const failedTargets = window.__publishFailed;
-        const unknownTargets = window.__publishUnknown;
+      if (modalContextMatches) {
+        activePublishContext.resultState = data;
+        markPublishedTargets();
+      }
+      if (modalContextMatches && data.status !== 'publishing') {
+        const failedTargets = Object.keys(data.publish_errors || {});
+        const unknownTargets = Object.keys(data.publish_unknown || {});
+        const publishedTargets = Object.keys(data.publish || {});
         const runKey = [
           failedTargets.slice().sort().join(','),
           unknownTargets.slice().sort().join(','),
-          window.__publishPublished.slice().sort().join(','),
+          publishedTargets.slice().sort().join(','),
         ].join('|');
-        if (window.__publishRunKey !== runKey) {
-          window.__publishRunKey = runKey;
-          window.__publishSelectionApplied = false;
+        if (activePublishContext.runKey !== runKey) {
+          activePublishContext.runKey = runKey;
+          activePublishContext.selectionApplied = false;
         }
-        if (!window.__publishSelectionApplied) {
+        if (!activePublishContext.selectionApplied) {
           const preselect = new Set([...failedTargets, ...unknownTargets]);
           for (const checkbox of document.querySelectorAll('.publish-target-checkbox')) {
             checkbox.checked = preselect.has(checkbox.value);
           }
-          window.__publishSelectionApplied = true;
+          activePublishContext.selectionApplied = true;
         }
         if (!failedTargets.length && !unknownTargets.length) {
           document.getElementById('montageNewPublishBtn').style.display = '';
@@ -5762,20 +5846,112 @@ async function shareMontage() {
   }
 }
 
+function currentPublishDraft() {
+  return activePublishContext && activePublishContext.draft;
+}
+
+function storedPublishContext(jobId) {
+  const cached = publishDraftsByJob.get(jobId);
+  if (cached) return cached;
+  try {
+    const draft = JSON.parse(sessionStorage.getItem(`publishDraft:${jobId}`) || 'null');
+    return draft ? {jobId, draft} : null;
+  } catch (_) { return null; }
+}
+
+function savePublishDraft() {
+  if (!activePublishContext || !activePublishContext.jobId) return;
+  const draft = activePublishContext.draft || {};
+  draft.title = document.getElementById('montagePublishTitle').value;
+  draft.text = document.getElementById('montagePublishText').value;
+  activePublishContext.draft = draft;
+  publishDraftsByJob.set(activePublishContext.jobId, activePublishContext);
+  try { sessionStorage.setItem(`publishDraft:${activePublishContext.jobId}`, JSON.stringify(draft)); } catch (_) {}
+}
+
+function restorePublishDraft(context, result) {
+  const targets = result.last_publish_targets || [];
+  const previousTitle = targets.find(target => target.title)?.title || '';
+  const previousText = targets.find(target => target.text || target.caption);
+  const previousCover = result.selected_cover_id || '';
+  const draft = context.draft || {
+    title: previousTitle,
+    text: previousText ? (previousText.text || previousText.caption || '') : '',
+    selectedCoverId: previousCover,
+    requestId: '',
+    forceNew: false,
+    confirmUnknown: false,
+  };
+  context.draft = draft;
+  context.resultState = result;
+  context.duration = Number(result.result?.duration) || 1;
+  publishDraftsByJob.set(context.jobId, context);
+  document.getElementById('montagePublishTitle').value = draft.title || '';
+  document.getElementById('montagePublishText').value = draft.text || '';
+  document.getElementById('montageCoverTime').max = String(Math.max(0.1, context.duration));
+  const video = document.getElementById('publishContextVideo');
+  const videoUrl = context.videoUrl || `/api/montage/preview/${encodeURIComponent(context.jobId)}`;
+  if (video.dataset.job !== context.jobId || video.dataset.source !== videoUrl) {
+    video.dataset.job = context.jobId;
+    video.dataset.source = videoUrl;
+    video.src = `${videoUrl}${videoUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+    video.load();
+  }
+  updatePublishCounts();
+}
+
+async function refreshActivePublishContext() {
+  const context = activePublishContext;
+  if (!context?.jobId) return null;
+  const response = await fetch(`/api/montage/result/${encodeURIComponent(context.jobId)}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+  if (activePublishContext !== context) return null;
+  context.resultState = data;
+  context.covers = data.covers || context.covers || [];
+  renderCoverState(data);
+  applyMirrorVariantState(data);
+  applyPrepareState(data);
+  markPublishedTargets();
+  updatePublishButton();
+  return data;
+}
+
+function startPublishContextPolling() {
+  if (publishContextPollTimer) clearInterval(publishContextPollTimer);
+  publishContextPollTimer = setInterval(async () => {
+    try {
+      const data = await refreshActivePublishContext();
+      if (!data || data.cover_status !== 'generating') {
+        clearInterval(publishContextPollTimer);
+        publishContextPollTimer = null;
+      }
+    } catch (error) {
+      publishWindowError(`Не удалось обновить состояние обложек: ${error.message}`);
+      clearInterval(publishContextPollTimer);
+      publishContextPollTimer = null;
+    }
+  }, 1200);
+}
+
 async function publishMontage() {
+  const context = activePublishContext;
+  if (!context || !context.jobId) { publishWindowError('Сначала выберите готовый ролик'); return; }
+  const draft = context.draft || (context.draft = {});
   const targets = [...document.querySelectorAll('.publish-target-checkbox:checked')].map(cb => cb.value);
   if (!targets.length) {
     publishWindowError('Выберите хотя бы одну цель публикации');
     return;
   }
   const mirrorSelected = targets.some(t => t.endsWith('_mirrored'));
-  if (mirrorSelected && !mirrorVariantReady()) {
+  if (mirrorSelected && !mirrorVariantReady(context.resultState)) {
     publishWindowError('Отражённая версия не готова. Включите «Создать отражённую версию» при монтаже и повторите.');
     return;
   }
-  const unknownSelected = targets.filter(tid => (window.__publishUnknown || []).includes(tid));
-  let confirmUnknown = !!window.__confirmUnknownOnce;
-  window.__confirmUnknownOnce = false;
+  const unknownPublished = Object.keys(context.resultState?.publish_unknown || {});
+  const unknownSelected = targets.filter(tid => unknownPublished.includes(tid));
+  let confirmUnknown = !!draft.confirmUnknown;
+  draft.confirmUnknown = false;
   if (unknownSelected.length && !confirmUnknown) {
     const confirmed = window.confirm(
       'Выбранные площадки ранее завершились с неизвестным результатом: ' + unknownSelected.join(', ') +
@@ -5786,18 +5962,22 @@ async function publishMontage() {
   }
   const title = document.getElementById('montagePublishTitle').value.trim();
   const text = document.getElementById('montagePublishText').value.trim();
+  draft.title = title;
+  draft.text = text;
+  if (!draft.requestId) {
+    draft.requestId = window.crypto?.randomUUID
+      ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+  publishDraftsByJob.set(context.jobId, context);
+  try { sessionStorage.setItem(`publishDraft:${context.jobId}`, JSON.stringify(draft)); } catch (_) {}
   const form = new FormData();
   form.append('targets_json', JSON.stringify(targets));
   form.append('title', title);
   form.append('text', text);
-  if (!window.__publicationQueueRequestId) {
-    window.__publicationQueueRequestId = window.crypto?.randomUUID
-      ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  }
-  form.append('request_id', window.__publicationQueueRequestId);
+  form.append('request_id', draft.requestId);
   if (confirmUnknown) form.append('confirm_unknown', 'true');
-  if (window.__forceNewPublication) form.append('new_publication', 'true');
-  if (window.__selectedCoverId) form.append('cover_id', window.__selectedCoverId);
+  if (draft.forceNew) form.append('new_publication', 'true');
+  if (draft.selectedCoverId) form.append('cover_id', draft.selectedCoverId);
   const publishButton = document.getElementById('montagePublishBtn');
   const queueNotice = document.getElementById('publicationQueueNotice');
   publishButton.disabled = true;
@@ -5809,7 +5989,7 @@ async function publishMontage() {
   const requestTimeout = setTimeout(() => controller.abort(), 30000);
   let queuedSuccessfully = false;
   try {
-    const res = await fetch(`/api/montage/${montageJobId}/publish-queue`, { method: 'POST', body: form, signal: controller.signal });
+    const res = await fetch(`/api/montage/${encodeURIComponent(context.jobId)}/publish-queue`, { method: 'POST', body: form, signal: controller.signal });
     const data = await res.json();
     if (!res.ok) {
       const detail = data.detail || 'Не удалось поставить публикацию в очередь';
@@ -5819,17 +5999,17 @@ async function publishMontage() {
           + data.confirm_targets.join(', ') + '.\nПовторить постановку в очередь?'
         );
         if (confirmed) {
-          window.__confirmUnknownOnce = true;
+          draft.confirmUnknown = true;
           publishButton.disabled = false;
           return publishMontage();
         }
       }
-      if (!window.__forceNewPublication && res.status === 400 && detail.includes('уже успешно опубликован')) {
+      if (!draft.forceNew && res.status === 400 && detail.includes('уже успешно опубликован')) {
         const confirmed = window.confirm(
           'Выбранные площадки уже опубликованы. Начать новую публикацию?'
         );
         if (confirmed) {
-          window.__forceNewPublication = true;
+          draft.forceNew = true;
           publishButton.textContent = 'Добавить в очередь';
           publishButton.disabled = false;
           return publishMontage();
@@ -5841,9 +6021,11 @@ async function publishMontage() {
       return;
     }
     queuedSuccessfully = true;
-    window.__publicationQueueRequestId = null;
-    window.__forceNewPublication = false;
-    window.__confirmUnknownOnce = false;
+    draft.requestId = '';
+    draft.forceNew = false;
+    draft.confirmUnknown = false;
+    publishDraftsByJob.set(context.jobId, context);
+    try { sessionStorage.setItem(`publishDraft:${context.jobId}`, JSON.stringify(draft)); } catch (_) {}
     const summary = (data.items || []).map(item =>
       `${item.platform_label}: ${publicationQueueDate(item.scheduled_at)}`
     ).join(' · ');
@@ -5897,39 +6079,71 @@ async function cancelMontage() {
   }
 }
 
-function openPublishWindow() {
+async function openPublishWindow(requestedContext) {
+  const contextData = requestedContext || {source:'montage', jobId:montageJobId};
+  const jobId = String(contextData.jobId || montageJobId || '');
+  if (!jobId) { montageError('Сначала выберите готовый ролик'); return; }
+  const previous = storedPublishContext(jobId);
+  activePublishContext = {
+    ...(previous || {}), ...contextData, jobId,
+    source:contextData.source || 'montage',
+    draft:previous?.draft || contextData.draft || null,
+  };
   document.getElementById('montagePublishModal').classList.add('active');
   document.body.style.overflow = 'hidden';
-  updatePublishCounts();
-  renderCoverState(window.__coverState || {});
-  applyMirrorVariantState(window.__opsState || {});
-  applyPrepareState(window.__opsState || {});
-  const video = document.getElementById('montageVideo');
-  const slider = document.getElementById('montageCoverTime');
-  slider.max = String(Math.max(0.1, Number(video.duration) || 1));
+  document.getElementById('montagePublishError').classList.remove('active');
+  document.getElementById('publicationQueueNotice').hidden = true;
+  document.getElementById('montagePublishModalResults').replaceChildren();
+  document.getElementById('montagePublishLiveProgress').replaceChildren();
+  document.querySelectorAll('.publish-target-checkbox').forEach(box => { box.checked = false; box.disabled = false; });
+  const loadButton = document.getElementById('montagePublishBtn');
+  loadButton.disabled = true;
+  loadButton.textContent = 'Загрузка…';
+  try {
+    const response = await fetch(`/api/montage/result/${encodeURIComponent(jobId)}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    restorePublishDraft(activePublishContext, data);
+    renderCoverState(data);
+    applyMirrorVariantState(data);
+    applyPrepareState(data);
+    markPublishedTargets();
+    updatePublishButton();
+    if (data.cover_status === 'generating') startPublishContextPolling();
+  } catch (error) {
+    publishWindowError(`Не удалось загрузить состояние публикации: ${error.message}`);
+  }
 }
 
 function startNewPublication() {
-  window.__forceNewPublication = true;
-  window.__publicationQueueRequestId = null;
-  window.__confirmUnknownOnce = false;
+  const draft = currentPublishDraft();
+  if (!draft) return;
+  draft.forceNew = true;
+  draft.requestId = '';
+  draft.confirmUnknown = false;
   document.getElementById('montageNewPublishBtn').style.display = 'none';
-  document.getElementById('montagePublishResults').innerHTML = '';
+  if (activePublishContext.source === 'montage') document.getElementById('montagePublishResults').innerHTML = '';
   document.getElementById('montagePublishModalResults').innerHTML = '';
   document.getElementById('montagePublishLiveProgress').innerHTML = '';
   document.getElementById('montagePublishError').classList.remove('active');
   document.getElementById('publicationQueueNotice').hidden = true;
   document.getElementById('publicationQueueNoticeText').textContent = '';
   for (const checkbox of document.querySelectorAll('.publish-target-checkbox')) checkbox.checked = false;
-  applyMirrorVariantState(window.__opsState || {});
+  applyMirrorVariantState(activePublishContext?.resultState || {});
   const publishButton = document.getElementById('montagePublishBtn');
   publishButton.disabled = false;
   publishButton.textContent = 'Добавить в очередь';
+  publishDraftsByJob.set(activePublishContext.jobId, activePublishContext);
+  try { sessionStorage.setItem(`publishDraft:${activePublishContext.jobId}`, JSON.stringify(draft)); } catch (_) {}
 }
 
 function closePublishWindow() {
+  savePublishDraft();
+  if (publishContextPollTimer) clearInterval(publishContextPollTimer);
+  publishContextPollTimer = null;
   document.getElementById('montagePublishModal').classList.remove('active');
   document.body.style.overflow = '';
+  activePublishContext = null;
 }
 
 function updatePublishCounts() {
@@ -5937,10 +6151,11 @@ function updatePublishCounts() {
   const text = document.getElementById('montagePublishText');
   document.getElementById('montagePublishTitleCount').textContent = `${title.value.length} / 119`;
   document.getElementById('montagePublishTextCount').textContent = `${text.value.length} / 2000`;
+  savePublishDraft();
 }
 
 function markPublishedTargets() {
-  const published = window.__publishPublished || [];
+  const published = Object.keys(activePublishContext?.resultState?.publish || {});
   for (const box of document.querySelectorAll('.publish-target-checkbox')) {
     const label = box.parentElement;
     if (label) label.dataset.published = published.includes(box.value) ? '1' : '';
@@ -5952,8 +6167,8 @@ function updatePublishButton() {
   if (!publishButton) return;
   const boxes = [...document.querySelectorAll('.publish-target-checkbox:not(:disabled)')];
   const selected = boxes.filter(cb => cb.checked).map(cb => cb.value);
-  const failed = window.__publishFailed || [];
-  const published = window.__publishPublished || [];
+  const failed = Object.keys(activePublishContext?.resultState?.publish_errors || {});
+  const published = Object.keys(activePublishContext?.resultState?.publish || {});
   if (!selected.length) {
     const allPublished = boxes.length > 0 && boxes.every(cb => published.includes(cb.value));
     publishButton.disabled = true;
@@ -5991,23 +6206,27 @@ function publishWindowError(message) {
 }
 
 function renderCoverState(state) {
-  window.__coverState = state || {};
-  if (Array.isArray(state.covers)) window.__montageCovers = state.covers;
-  const covers = window.__montageCovers || [];
-  if (window.__selectedCoverId && !covers.some(item => item.id === window.__selectedCoverId)) window.__selectedCoverId = '';
+  const context = activePublishContext;
+  if (!context) return;
+  state = state || context.resultState || {};
+  context.resultState = {...(context.resultState || {}), ...state};
+  if (Array.isArray(state.covers)) context.covers = state.covers;
+  const covers = context.covers || context.resultState.covers || [];
+  const draft = context.draft || (context.draft = {});
+  if (draft.selectedCoverId && !covers.some(item => item.id === draft.selectedCoverId)) draft.selectedCoverId = '';
   const status = document.getElementById('montageCoverStatus');
   if (!status) return;
-  const progress = Number(state.cover_progress) || 0;
-  if (state.cover_status === 'generating') status.textContent = `${state.cover_detail || 'Генерация обложек'} · ${progress.toFixed(0)}%`;
-  else if (state.cover_status === 'error') status.textContent = `Ошибка генерации: ${state.cover_error || state.cover_detail || ''}`;
+  const progress = Number(context.resultState.cover_progress) || 0;
+  if (context.resultState.cover_status === 'generating') status.textContent = `${context.resultState.cover_detail || 'Генерация обложек'} · ${progress.toFixed(0)}%`;
+  else if (context.resultState.cover_status === 'error') status.textContent = `Ошибка генерации: ${context.resultState.cover_error || context.resultState.cover_detail || ''}`;
   else if (covers.length) status.textContent = `Доступно обложек: ${covers.length}`;
   else status.textContent = 'Обложки не создавались';
   const grid = document.getElementById('montageCoverGrid');
-  const coverKey = `${montageJobId}:${covers.map(item => `${item.id}:${item.file}`).join('|')}`;
+  const coverKey = `${context.jobId}:${covers.map(item => `${item.id}:${item.file}`).join('|')}`;
   if (grid.dataset.coverKey !== coverKey) {
     grid.dataset.coverKey = coverKey;
     grid.innerHTML = covers.map(item => {
-      const assetUrl = `/api/montage/${encodeURIComponent(montageJobId)}/covers/${encodeURIComponent(item.file)}`;
+      const assetUrl = `/api/montage/${encodeURIComponent(context.jobId)}/covers/${encodeURIComponent(item.file)}`;
       return `<div class="cover-card" data-cover-id="${encodeURIComponent(item.id)}" data-full-url="${assetUrl}">
         <input class="cover-check" type="checkbox" aria-label="Выбрать ${esc(item.name || item.id)}">
         <img src="${assetUrl}?thumbnail=true" alt="${esc(item.name || 'Обложка')}" loading="lazy" decoding="async" width="360" height="640">
@@ -6024,15 +6243,18 @@ function renderCoverState(state) {
     }
   }
   for (const card of grid.querySelectorAll('.cover-card')) {
-    const selected = decodeURIComponent(card.dataset.coverId) === window.__selectedCoverId;
+    const selected = decodeURIComponent(card.dataset.coverId) === draft.selectedCoverId;
     card.classList.toggle('selected', selected);
     card.querySelector('.cover-check').checked = selected;
   }
 }
 
 function selectMontageCover(id) {
-  window.__selectedCoverId = window.__selectedCoverId === id ? '' : id;
-  renderCoverState(window.__coverState || {});
+  if (!activePublishContext) return;
+  const draft = activePublishContext.draft || (activePublishContext.draft = {});
+  draft.selectedCoverId = draft.selectedCoverId === id ? '' : id;
+  savePublishDraft();
+  renderCoverState(activePublishContext.resultState || {});
 }
 
 function openCoverZoom(url) {
@@ -6042,16 +6264,19 @@ function openCoverZoom(url) {
 
 async function uploadMontageCover() {
   const input = document.getElementById('montageCoverUpload');
-  if (!input.files.length || !montageJobId) return;
+  const context = activePublishContext;
+  if (!input.files.length || !context?.jobId) return;
   const form = new FormData();
   form.append('cover', input.files[0]);
-  const response = await fetch(`/api/montage/${montageJobId}/covers/upload`, {method:'POST',body:form});
+  const response = await fetch(`/api/montage/${encodeURIComponent(context.jobId)}/covers/upload`, {method:'POST',body:form});
   const data = await response.json();
   input.value = '';
   if (!response.ok) { publishWindowError(data.detail || 'Не удалось загрузить обложку'); return; }
-  window.__montageCovers = data.covers || [];
-  window.__selectedCoverId = window.__montageCovers.at(-1)?.id || '';
-  renderCoverState({covers:window.__montageCovers,cover_status:'done'});
+  context.covers = data.covers || [];
+  context.draft.selectedCoverId = context.covers.at(-1)?.id || '';
+  context.resultState = {...(context.resultState || {}), ...data, covers:context.covers, cover_status:'done'};
+  savePublishDraft();
+  renderCoverState(context.resultState);
 }
 
 function toggleStopFrameCover() {
@@ -6064,11 +6289,13 @@ function previewCoverFrame() {
   const slider = document.getElementById('montageCoverTime');
   const time = Number(slider.value) || 0;
   document.getElementById('montageCoverTimeLabel').textContent = fmtTimecode(time);
-  const video = document.getElementById('montageVideo');
+  const video = document.getElementById('publishContextVideo');
   if (Number.isFinite(video.duration)) video.currentTime = Math.min(time, video.duration);
 }
 
 async function generateStopFrameCover() {
+  const context = activePublishContext;
+  if (!context?.jobId) return;
   const title = document.getElementById('montageCoverTitle').value.trim();
   if (!title) { publishWindowError('Введите название для обложки'); return; }
   const button = document.getElementById('generateCoverBtn');
@@ -6077,10 +6304,12 @@ async function generateStopFrameCover() {
   form.append('timestamp', document.getElementById('montageCoverTime').value || 0);
   form.append('title', title);
   try {
-    const response = await fetch(`/api/montage/${montageJobId}/covers/generate`, {method:'POST',body:form});
+    const response = await fetch(`/api/montage/${encodeURIComponent(context.jobId)}/covers/generate`, {method:'POST',body:form});
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || 'Ошибка генерации');
-    startMontagePolling();
+    context.resultState = {...(context.resultState || {}), ...data, cover_status:data.cover_status || 'generating'};
+    renderCoverState(context.resultState);
+    startPublishContextPolling();
   } catch (error) {
     publishWindowError(error.message);
   } finally {
@@ -6801,6 +7030,8 @@ function changePublicationQueuePage(delta) {
 }
 
 </script>
+<script src="/static/motion/motion-publish-adapter.js" defer></script>
+<script src="/static/motion/motion.js" defer></script>
 
 </body>
 </html>

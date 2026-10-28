@@ -789,8 +789,14 @@ def _apply_silence_edl(
     if abs(master_duration_ms - source_duration_ms) > max(100, ceil_fraction(Fraction(2000, 1) / fps)):
         raise RuntimeError("The effected master duration differs from the analyzed source")
     duration_for_edl = min(source_duration_ms, master_duration_ms)
-    normalized = normalize_cut_list(raw_cuts, duration_for_edl)
-    effective = effective_frame_intervals(normalized, fps, duration_for_edl)
+    # Validate against the analyzed source timeline, then snap against the
+    # actual CFR frame count. The normalized master can be a millisecond
+    # shorter than the source (e.g. 57,068 ms vs 57,067 ms); cuts at the tail
+    # should clip to its last frame instead of failing the entire render.
+    normalized = normalize_cut_list(raw_cuts, source_duration_ms)
+    effective = effective_frame_intervals(
+        normalized, fps, duration_for_edl, total_frames=total_frames,
+    )
     if not effective:
         return source, {
             "enabled": True, "applied": False, "reason": "no_effective_frames",

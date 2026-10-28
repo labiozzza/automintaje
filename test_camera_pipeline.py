@@ -247,16 +247,17 @@ class TransformFramePanTests(unittest.TestCase):
         expected = int(source_x / (row.size - 1) * 255)
         return int(np.argmin(np.abs(row - expected)))
 
-    def test_clamp_mode_preserves_pan_beyond_frame(self):
+    def test_clamp_mode_keeps_crop_inside_frame_without_stretched_borders(self):
         from montage.apply_face_zoom_v5 import transform_frame
 
         frame = self.ramp_frame()
         anchor_x = 0.315  # real eye span of job 999c0cdf starts here
         out = transform_frame(frame, anchor_x, 0.42, 1.12, 0.5, 0.42, "clamp")
-        # x1_px = 0.315*720 - 0.5*720/1.12 = -94.6 → source col 200 lands
-        # at (200 - x1_px) * 1.12 ≈ 330, NOT at the clamped 224.
+        # The crop origin is clamped to source x=0, so source col 200 lands at
+        # 200 * 1.12 ≈ 224 rather than padding the left edge with repeated pixels.
         col = self._column_of_source_x(out, 200)
-        self.assertAlmostEqual(col, 330, delta=3)
+        self.assertAlmostEqual(col, 224, delta=3)
+        self.assertGreater(int(out[640, 10, 0]), int(out[640, 0, 0]))
 
     def test_pan_matches_anchor_shift(self):
         from montage.apply_face_zoom_v5 import transform_frame
@@ -264,12 +265,10 @@ class TransformFramePanTests(unittest.TestCase):
         frame = self.ramp_frame()
         left = transform_frame(frame, 0.315, 0.42, 1.12, 0.5, 0.42, "clamp")
         right = transform_frame(frame, 0.486, 0.42, 1.12, 0.5, 0.42, "clamp")
-        # The background slides opposite the pan: source col 200 lands at
-        # ≈330 px for the left anchor and ≈192 px for the right one — the
-        # unclamped window pans the full eye span (≈171 source px).
+        # The camera still pans within the available source bounds.
         col_left = self._column_of_source_x(left, 200)
         col_right = self._column_of_source_x(right, 200)
-        self.assertGreater(col_left - col_right, 100)
+        self.assertAlmostEqual(col_left - col_right, 32, delta=4)
 
 
 class StageOrderTests(unittest.TestCase):

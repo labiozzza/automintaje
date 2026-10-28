@@ -176,12 +176,16 @@ def normalize_cut_list(cuts: Any, duration_ms: int) -> list[dict[str, Any]]:
 
 
 def effective_frame_intervals(
-    intervals: list[dict[str, Any]], fps: Fraction, duration_ms: int
+    intervals: list[dict[str, Any]], fps: Fraction, duration_ms: int,
+    total_frames: int | None = None,
 ) -> list[dict[str, Any]]:
     """Map half-open source-time cuts to CFR frame ranges using ceil at both edges."""
     if fps <= 0:
         raise ValueError("invalid frame rate")
-    total_frames = ceil_fraction(Fraction(duration_ms, 1000) * fps)
+    if total_frames is None:
+        total_frames = ceil_fraction(Fraction(duration_ms, 1000) * fps)
+    elif isinstance(total_frames, bool) or not isinstance(total_frames, int) or total_frames <= 0:
+        raise ValueError("invalid total frame count")
     result: list[dict[str, Any]] = []
     for interval in intervals:
         start_frame = max(0, min(total_frames, ceil_fraction(Fraction(interval["start_ms"], 1000) * fps)))

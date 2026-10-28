@@ -15,6 +15,7 @@ central_work/
 outputs/
 instagram-media/
 published-media/
+motion/assets/remotion/node_modules/
 config/secrets*.json
 montage/instaposter/client_secret.json
 montage/instaposter/token.json
