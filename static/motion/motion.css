@@ -57,6 +57,9 @@
 .motion-scene-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; align-content:start; gap:5px; max-width:160px; }
 .motion-scene-actions .btn { padding:5px 8px; font-size:11px; }
 .motion-scene-thumb { display:block; width:130px; max-width:100%; aspect-ratio:16/9; object-fit:cover; margin-top:8px; border-radius:6px; background:#05060a; }
+.motion-generated-scene { display:grid; gap:9px; margin:12px 0 0 16px; padding:12px; border:1px solid #725fe7; border-radius:12px; background:rgba(114,95,231,.09); }
+.motion-generated-scene video { display:block; width:min(280px,100%); max-height:420px; aspect-ratio:9/16; object-fit:contain; background:#09090d; border-radius:8px; }
+.motion-engineer-button { border-color:#8c7bff !important; }
 .motion-output-card[hidden] { display:none; }
 .motion-output-actions { margin-top:10px; }
 .motion-mirror-tools { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:10px; }

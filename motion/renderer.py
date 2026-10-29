@@ -56,7 +56,8 @@ class MotionRenderer:
     def render(self, project_id: str, revision: int, source_path: Path,
                source_metadata: dict, plan: dict, preview: bool,
                preview_duration_ms: Optional[int], cancel_event: threading.Event,
-               progress_cb: Optional[Callable[[float, str], None]] = None) -> dict:
+               progress_cb: Optional[Callable[[float, str], None]] = None,
+               extra_overlays: Optional[list] = None) -> dict:
         if not self.capabilities()["available"]:
             raise MotionRenderError("Remotion renderer не установлен (npm install в motion/assets/remotion)")
         source_path = Path(source_path)
@@ -132,6 +133,18 @@ class MotionRenderer:
                     # Reuse the immutable source bytes instead of encoding an empty layer.
                     shutil.copy2(source_path, master_path)
                 self._check_cancel(cancel_event)
+                generated_scene_ids = []
+                if extra_overlays:
+                    if not overlay_path.is_file():
+                        self._make_transparent_overlay(
+                            overlay_path, width, height, fps_num, fps_den, render_duration_ms,
+                            output_dir, cancel_event,
+                        )
+                    overlay_path, generated_scene_ids = self._combine_generated_overlays(
+                        overlay_path, extra_overlays, output_dir, width, height,
+                        fps_num, fps_den, render_duration_ms, cancel_event, progress_cb,
+                    )
+                    self._validate_overlay(overlay_path, width, height, render_duration_ms, fps_num, fps_den)
                 if overlay_path.is_file():
                     self._compose(
                         operation_key, source_path, overlay_path, master_path, metadata,
@@ -145,7 +158,7 @@ class MotionRenderer:
                     if final_source != preview_path:
                         shutil.copy2(final_source, preview_path)
                     quality = validate_composite(source_path, preview_path, render_duration_ms)
-                    project_dir = self.work_root / ".motion" / "projects" / project_id
+                    project_dir = self.montage_work / ".motion" / "projects" / project_id
                     preview_dir = project_dir / "revisions" / ("%04d" % revision) / "previews"
                     preview_dir.mkdir(parents=True, exist_ok=True)
                     preview_destination = preview_dir / ("preview_%s.mp4" % uuid.uuid4().hex[:12])
@@ -180,6 +193,7 @@ class MotionRenderer:
                     "fps_den": fps_den,
                     "source_sha256": str(source_metadata.get("sha256") or ""),
                     "render_mode": "remotion-prores4444+ffmpeg-composite" if overlay_path.is_file() else "source-copy-no-scenes",
+                    "generated_scene_ids": generated_scene_ids,
                     "quality": quality,
                 }
                 shutil.rmtree(output_dir / "motion_render", ignore_errors=True)
@@ -188,7 +202,7 @@ class MotionRenderer:
                 return result
         except Exception as exc:
             if remotion_log.is_file():
-                diagnostic_dir = self.work_root / ".motion" / "projects" / project_id / "revisions" / ("%04d" % revision) / "logs"
+                diagnostic_dir = self.montage_work / ".motion" / "projects" / project_id / "revisions" / ("%04d" % revision) / "logs"
                 diagnostic_dir.mkdir(parents=True, exist_ok=True)
                 try:
                     shutil.copy2(remotion_log, diagnostic_dir / (output_job_id + "-remotion.log"))
@@ -390,6 +404,84 @@ class MotionRenderer:
         tolerance = max(0.12, float(fps_den) / max(1, fps_num) + 0.04)
         if abs(duration - expected) > tolerance:
             raise MotionRenderError("Длительность прозрачного слоя отличается от согласованного таймлайна")
+
+    def _make_transparent_overlay(self, output: Path, width: int, height: int,
+                                  fps_num: int, fps_den: int, duration_ms: int,
+                                  workdir: Path, cancel_event: threading.Event) -> None:
+        ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+        command = [
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "color=c=black@0.0:s=%dx%d:r=%d/%d:d=%.6f" % (
+                width, height, fps_num, fps_den, duration_ms / 1000.0,
+            ),
+            "-vf", "format=yuva444p10le", "-c:v", "prores_ks", "-profile:v", "4",
+            "-pix_fmt", "yuva444p10le", "-an", str(output),
+        ]
+        try:
+            run_ffmpeg_progress(
+                command, duration=duration_ms / 1000.0, cwd=workdir,
+                log_path=workdir / "motion-transparent-base.log", timeout=180,
+                job_id="motion-transparent-" + uuid.uuid4().hex[:8], cancel_cb=cancel_event.is_set,
+            )
+        except Exception as exc:
+            raise MotionRenderError("Не удалось создать прозрачную основу generated scene") from exc
+
+    def _combine_generated_overlays(self, base_overlay: Path, extra_overlays: list,
+                                    workdir: Path, width: int, height: int,
+                                    fps_num: int, fps_den: int, duration_ms: int,
+                                    cancel_event: threading.Event, progress_cb=None):
+        validated = []
+        for item in extra_overlays:
+            path = Path(str(item.get("path") or ""))
+            start_ms = int(item.get("start_ms") or 0)
+            end_ms = int(item.get("end_ms") or 0)
+            if path.is_symlink() or not path.is_file() or not (0 <= start_ms < end_ms <= duration_ms):
+                raise MotionRenderError("Generated scene overlay is missing or outside the source timeline")
+            metadata = probe_video(path)
+            if (metadata.get("width"), metadata.get("height")) != (width, height):
+                raise MotionRenderError("Generated scene overlay dimensions differ from the immutable source")
+            generated_fps = float(metadata.get("fps_num") or 0) / max(1, int(metadata.get("fps_den") or 1))
+            source_fps = float(fps_num) / max(1, fps_den)
+            if abs(generated_fps - source_fps) > 0.02:
+                raise MotionRenderError("Generated scene overlay FPS differs from the immutable source")
+            generated_duration = float(metadata.get("duration_seconds") or 0)
+            if abs(generated_duration - (end_ms - start_ms) / 1000.0) > max(0.08, 1.0 / source_fps + 0.01):
+                raise MotionRenderError("Generated scene overlay duration differs from its scene interval")
+            validated.append((path, start_ms, end_ms, str(item.get("scene_id") or "")))
+
+        target = workdir / "overlay_with_generated_scenes.mov"
+        ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+        command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(base_overlay)]
+        filters = []
+        current = "0:v"
+        for index, (path, start_ms, end_ms, _scene_id) in enumerate(validated, start=1):
+            command += ["-i", str(path)]
+            start_s, end_s = start_ms / 1000.0, end_ms / 1000.0
+            shifted = "generated_%d" % index
+            combined = "combined_%d" % index
+            filters.append("[%d:v]setpts=PTS+%.9f/TB[%s]" % (index, start_s, shifted))
+            filters.append(
+                "[%s][%s]overlay=shortest=0:eof_action=pass:format=auto:enable='between(t,%.9f,%.9f)'[%s]"
+                % (current, shifted, start_s, end_s, combined)
+            )
+            current = combined
+        filters.append("[%s]format=yuva444p10le[outv]" % current)
+        command += [
+            "-filter_complex", ";".join(filters), "-map", "[outv]", "-an",
+            "-c:v", "prores_ks", "-profile:v", "4", "-pix_fmt", "yuva444p10le",
+            "-r", "%d/%d" % (fps_num, fps_den), str(target),
+        ]
+        try:
+            run_ffmpeg_progress(
+                command, duration=duration_ms / 1000.0, cwd=workdir,
+                log_path=workdir / "motion-generated-overlays.log",
+                on_progress=(lambda pct: progress_cb(50 + min(8, float(pct) * 0.08), "Сборка generated scene layers") if progress_cb else None),
+                timeout=900, job_id="motion-generated-" + uuid.uuid4().hex[:8],
+                cancel_cb=cancel_event.is_set,
+            )
+        except Exception as exc:
+            raise MotionRenderError("Не удалось скомпоновать generated scene layers") from exc
+        return target, [scene_id for _path, _start, _end, scene_id in validated]
 
     @staticmethod
     def _duration(path: Path) -> float:

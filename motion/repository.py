@@ -320,9 +320,21 @@ class MotionRepository:
                     "detail='Операция прервана перезапуском сервера',error='interrupted',updated_at=? WHERE id=?",
                     (now, operation["id"]),
                 )
+                project = connection.execute(
+                    "SELECT manifest_json FROM motion_projects WHERE id=?",
+                    (operation["project_id"],),
+                ).fetchone()
+                if project is None:
+                    continue
+                try:
+                    manifest = json.loads(project["manifest_json"])
+                except (TypeError, json.JSONDecodeError):
+                    manifest = {}
+                manifest["status"] = "interrupted"
+                manifest["active_operation_id"] = ""
                 connection.execute(
-                    "UPDATE motion_projects SET status='interrupted',active_operation_id='',updated_at=? WHERE id=?",
-                    (now, operation["project_id"]),
+                    "UPDATE motion_projects SET status='interrupted',manifest_json=?,updated_at=? WHERE id=?",
+                    (_json(manifest), now, operation["project_id"]),
                 )
                 interrupted.append(str(operation["project_id"]))
         return interrupted

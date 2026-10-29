@@ -115,13 +115,17 @@ class OpenCodeBridge:
         self.password = ""
         self._close_log()
 
-    def create_session(self, title: str, model_id: str) -> str:
+    def create_session(self, title: str, model_id: str, agent: str = "motion-director",
+                       directory: Optional[Path] = None) -> str:
         provider, model = _split_model(model_id)
+        path = "/session"
+        session_directory = Path(directory).resolve() if directory is not None else self.project_root
+        path += "?" + urllib.parse.urlencode({"directory": str(session_directory)})
         response = self._request(
-            "POST", "/session",
+            "POST", path,
             body={
                 "title": str(title)[:160],
-                "agent": "motion-director",
+                "agent": str(agent),
                 "model": {"providerID": provider, "id": model},
             },
             timeout=30,
@@ -135,18 +139,21 @@ class OpenCodeBridge:
         result = self._request("GET", "/provider", timeout=20)
         return result if isinstance(result, dict) else {}
 
-    def messages(self, session_id: str, limit: int = 50) -> list:
-        query = urllib.parse.urlencode({"limit": max(1, min(100, int(limit)))})
+    def messages(self, session_id: str, limit: int = 50, directory: Optional[Path] = None) -> list:
+        params = {"limit": max(1, min(100, int(limit)))}
+        params["directory"] = str((Path(directory).resolve() if directory is not None else self.project_root))
+        query = urllib.parse.urlencode(params)
         result = self._request("GET", "/session/%s/message?%s" % (urllib.parse.quote(session_id, safe=""), query), timeout=30)
         return result if isinstance(result, list) else []
 
     def prompt_async(self, session_id: str, model_id: str, parts: list,
                      format_schema: Optional[dict] = None, message_id: Optional[str] = None,
-                     system: str = "") -> None:
+                     system: str = "", agent: str = "motion-director",
+                     directory: Optional[Path] = None) -> None:
         provider, model = _split_model(model_id)
         body = {
             "messageID": message_id or ("msg_" + uuid.uuid4().hex),
-            "agent": "motion-director",
+            "agent": str(agent),
             "model": {"providerID": provider, "modelID": model},
             "parts": parts,
         }
@@ -154,8 +161,11 @@ class OpenCodeBridge:
             body["system"] = str(system)[:20_000]
         if format_schema:
             body["format"] = {"type": "json_schema", "schema": format_schema}
+        path = "/session/%s/prompt_async" % urllib.parse.quote(session_id, safe="")
+        session_directory = Path(directory).resolve() if directory is not None else self.project_root
+        path += "?" + urllib.parse.urlencode({"directory": str(session_directory)})
         self._request(
-            "POST", "/session/%s/prompt_async" % urllib.parse.quote(session_id, safe=""),
+            "POST", path,
             body=body, timeout=60, allow_empty=True,
         )
 

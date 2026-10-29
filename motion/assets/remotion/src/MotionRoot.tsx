@@ -29,7 +29,7 @@ export const MotionRoot: React.FC = () => (
       profile: 'minimal',
       renderMode: 'full',
     } as MotionPlanProps}
-    calculateMetadata={({props}) => {
+    calculateMetadata={({props}: {props: MotionPlanProps}) => {
       const fps = Math.max(1, props.fpsNum / Math.max(1, props.fpsDen));
       const durationMs = props.renderMode === 'preview'
         ? Math.min(props.durationMs, props.previewDurationMs || 15000)

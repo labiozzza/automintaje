@@ -43,9 +43,9 @@ def valid_plan():
 class MotionSchemaTests(unittest.TestCase):
     def test_open_code_prompt_embeds_schema_without_unsupported_format_field(self):
         text = MotionService._prompt_with_schema("Верни Motion Plan.")
-        marker = "Точная JSON Schema motion-plan.v1 (верни объект, соответствующий ей):\n"
+        marker = "Точная JSON Schema motion-plan.v2 (верни объект, соответствующий ей):\n"
         schema = json.loads(text.split(marker, 1)[1])
-        self.assertEqual(schema["properties"]["schema_version"]["const"], "motion-plan.v1")
+        self.assertEqual(schema["properties"]["schema_version"]["const"], "motion-plan.v2")
 
         with tempfile.TemporaryDirectory() as temp:
             bridge = OpenCodeBridge(Path(temp), Path(temp) / "state")
@@ -202,6 +202,20 @@ class MotionStorageTests(unittest.TestCase):
         self.assertEqual(repo.get_revision(project["id"], 1)["plan"]["scenes"][0]["scene_id"], "s01")
         self.assertEqual(repo.get_operation(operation["id"])["status"], "queued")
         self.assertEqual(revision["status"], "review")
+
+    def test_recover_interrupted_clears_active_operation_from_manifest(self):
+        repo = MotionRepository(self.root / ".motion" / "recover.sqlite3")
+        project = repo.create_project({
+            "id": "motion_" + "d" * 32, "source_job_id": "parent",
+            "source_fingerprint": "sha256:" + "b" * 64, "status": "created",
+        })
+        operation = repo.create_operation(project["id"], "scene_engineer", "recover-me")
+        repo.update_project(project["id"], status="designing", active_operation_id=operation["id"])
+        self.assertEqual(repo.recover_interrupted(), [project["id"]])
+        self.assertEqual(repo.get_operation(operation["id"])["status"], "interrupted")
+        recovered = repo.get_project(project["id"])
+        self.assertEqual(recovered["status"], "interrupted")
+        self.assertEqual(recovered.get("active_operation_id"), "")
 
     def test_output_job_has_existing_publication_contract(self):
         project = {"id": "motion_" + "c" * 32, "source_job_id": "parent", "source_name": "video.mp4"}

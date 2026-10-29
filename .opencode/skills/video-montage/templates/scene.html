@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>scene</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:ital,wght@0,500;0,700;0,800;0,900;1,900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  /* Палитра и шрифты — меняются здесь (см. скилл video-styles). */
+  :root { --bg:#101A2E; --bg2:#1B2B4A; --ink:#FFFFFF; --mut:#8C97AD; --acc:#C8FF3E; --acc2:#46E0FF; --hot:#FF4A2B; --card:#FFFFFF; --cardInk:#121318; }
+  html, body { margin:0; background:#000; overflow:hidden; }
+  #stage { position:absolute; left:0; top:0; width:1080px; height:1920px; overflow:hidden; background:var(--bg);
+           font-family:'Inter Tight', system-ui, sans-serif; color:var(--ink); }
+  #cv { position:absolute; inset:0; }
+  .scene { position:absolute; inset:0; display:none; will-change:transform, opacity; }
+  /* Крупный текст: держать в рамке x 90–990 (ширина ≤ 880), кегль ≈ 1250 / букв в строке. */
+  .big { position:absolute; left:90px; width:900px; text-align:center; font-weight:900; font-style:italic;
+         text-transform:uppercase; letter-spacing:-.045em; line-height:.95; word-spacing:.14em; }
+  .w { display:inline-block; white-space:nowrap; } .ch { display:inline-block; }
+  .mono { font-family:'JetBrains Mono', monospace; font-weight:500; letter-spacing:.04em; text-transform:uppercase; }
+  .acc { color:var(--acc); } .hot { color:var(--hot); }
+  #cap { position:absolute; left:180px; width:720px; top:1300px;   /* x 180–900: справа на этой высоте кнопки соцсети */
+         height:160px; display:flex; align-items:center; justify-content:center;
+         text-align:center; font-weight:800; font-size:58px; line-height:1.12; text-shadow:0 4px 18px rgba(0,0,0,.55); }
+  #cap span { transition:none; } #cap .future { opacity:.35; } #cap .now { color:var(--acc); }
+  /* Телефон */
+  .phone { position:absolute; left:290px; top:330px; width:500px; height:960px; border-radius:72px; background:#0B0F19;
+           box-shadow:0 0 0 14px #2A3550, 0 40px 120px rgba(0,0,0,.5); overflow:hidden; }
+  .phone .scr { position:absolute; inset:0; background:linear-gradient(180deg,#5B7CFA,#9F6BFF); }
+  .notif { position:absolute; left:24px; right:24px; top:90px; padding:26px 28px; border-radius:34px; background:rgba(255,255,255,.92);
+           color:var(--cardInk); font-size:30px; font-weight:700; line-height:1.2; display:flex; gap:20px; align-items:center; }
+  .notif .ic { width:72px; height:72px; border-radius:18px; background:var(--acc); flex:none; display:grid; place-items:center; font-size:40px; }
+  .notif small { display:block; font-weight:500; color:#555; font-size:24px; margin-top:6px; }
+  .tap { position:absolute; width:90px; height:90px; margin:-45px 0 0 -45px; border-radius:50%; background:rgba(18,19,24,.18); border:5px solid rgba(18,19,24,.7); }
+</style>
+<script src="timeline.js"></script>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv" width="1080" height="1920"></canvas>
+
+  <div class="scene" id="s_title">
+    <div class="big" id="t1" style="top:600px;font-size:122px">Это шаблон<br>ролика</div>
+    <div class="big acc" id="t2" style="top:900px;font-size:135px">под голос</div>
+  </div>
+
+  <div class="scene" id="s_num">
+    <div class="mono" style="position:absolute;top:520px;width:100%;text-align:center;font-size:40px;color:var(--mut)">считает сам</div>
+    <div class="big acc" id="num" style="top:640px;font-size:250px">0</div>
+    <div class="big" style="top:930px;font-size:110px">штук</div>
+  </div>
+
+  <div class="scene" id="s_bars"><!-- график рисуется на #cv в drawBars() -->
+    <div class="big" id="tb" style="top:330px;font-size:100px">растёт<br>по&nbsp;данным</div>
+  </div>
+
+  <div class="scene" id="s_ui">
+    <div class="phone"><div class="scr">
+      <div class="notif" id="nt"><div class="ic">✓</div><div>Ролик готов<small>интерфейс нарисован кодом</small></div></div>
+    </div></div>
+    <svg width="1080" height="1920" style="position:absolute;inset:0;pointer-events:none">
+      <rect id="hl" x="300" y="408" width="480" height="146" rx="40" fill="none" stroke="#C8FF3E" stroke-width="8"/>
+    </svg>
+    <div class="tap" id="tap"></div>
+  </div>
+
+  <div id="cap"></div>
+</div>
+
+<script>
+// ───────── таймлайн: timeline.js (из retime.py) или демо ─────────
+window.TL = window.TL || { fps:30, w:1080, h:1920, end:11.5, words:[
+  ['Это',.3,.5],['шаблон',.55,1.0],['ролика.',1.05,1.5],
+  ['Слова',1.75,2.15],['появляются',2.2,2.8],['ровно',2.85,3.15],['под',3.2,3.35],['голос.',3.4,3.7],
+  ['Цифры',4.0,4.35],['считают',4.4,4.8],['сами:',4.85,5.2],['двенадцать',5.25,5.8],['тысяч.',5.85,6.3],
+  ['Графики',6.6,7.05],['растут',7.1,7.45],['по',7.5,7.6],['данным.',7.65,8.1],
+  ['А',8.4,8.5],['интерфейс',8.55,9.1],['рисуется',9.15,9.6],['кодом.',9.65,10.0]].map(([w,t0,t1])=>({w,t0,t1})) };
+const TL = window.TL, END = TL.end;
+const CAPS = true;   // false — без субтитров, только ключевые слова в сценах
+
+// ───────── хелперы ─────────
+const $ = id => document.getElementById(id);
+const clamp = (x,a=0,b=1) => Math.min(b, Math.max(a, x)), lerp = (a,b,k) => a + (b-a)*k;
+const P = (t,a,d) => clamp((t-a)/d);                                   // прогресс 0..1 от a за d секунд
+const eo = x => 1 - Math.pow(1-x, 3), eio = x => x<.5 ? 4*x*x*x : 1 - Math.pow(-2*x+2, 3)/2;
+function spr(t,a,f=2.2,z=.45){ const x=t-a; if(x<=0) return 0; const w=2*Math.PI*f; return 1-Math.exp(-z*w*x)*Math.cos(w*Math.sqrt(1-z*z)*x); }
+const norm = s => s.toLowerCase().replace(/ё/g,'е').replace(/[^\p{L}\p{N}]/gu,'');
+// W('слово', n, запасное) — время начала n-го вхождения слова в озвучке. Всё в ролике привязано к словам.
+function W(word, n=1, fb=0){ let k=0; for(const w of TL.words) if(norm(w.w)===norm(word) && ++k===n) return w.t0; return fb; }
+// split: буквы в span-ах, сгруппированы по словам (слова не рвутся при переносе)
+function split(el){ if(el._ch) return el._ch; const html=el.innerHTML.split(/<br\s*\/?>/i); el.innerHTML='';
+  html.forEach((line,li)=>{ if(li) el.appendChild(document.createElement('br'));
+    line.replace(/&nbsp;/g,' ').split(' ').forEach((word,wi)=>{ if(wi) el.appendChild(document.createTextNode(' '));
+      const ws=document.createElement('span'); ws.className='w';
+      for(const c of word){ const s=document.createElement('span'); s.className='ch'; s.textContent=c; ws.appendChild(s); }
+      el.appendChild(ws); }); });
+  return el._ch=[...el.querySelectorAll('.ch')]; }
+// charsIn: буквы появляются с blur, подъёмом и пружиной начиная с t0
+function charsIn(el,t,t0,st=.03){ split(el).forEach((c,i)=>{ const p=spr(t,t0+i*st,2.4,.5), q=P(t,t0+i*st,.25);
+  c.style.opacity=q; c.style.transform=`translateY(${(1-p)*60}px)`; c.style.filter=q<1?`blur(${(1-q)*10}px)`:''; }); }
+const fmt = v => Math.round(v).toLocaleString('ru-RU').replace(/\s/g,' ');
+
+// ───────── сцены: [id, начало, конец, переход входа] — границы по словам ─────────
+const K = { num:W('цифры',1,4.0), bars:W('графики',1,6.6), ui:W('интерфейс',1,8.55) };
+const SCN = [
+  ['s_title', 0,              K.num-.15,  'cut'],
+  ['s_num',   K.num-.15,      K.bars-.15, 'up'],
+  ['s_bars',  K.bars-.15,     K.ui-.3,    'zoom'],
+  ['s_ui',    K.ui-.3,        END,        'up'],
+];
+function sceneTf(t,[id,t0,t1,tr]){   // вход за 0,35 с; выход — следующая сцена перекрывает
+  const k=eo(P(t,t0,.35)); let o=1, tf='';
+  if(tr==='up'){ tf=`translateY(${(1-k)*1920}px)`; }
+  else if(tr==='zoom'){ tf=`scale(${lerp(1.25,1,k)})`; o=k; }
+  else if(tr==='fade'){ o=k; }
+  return {o, tf};
+}
+
+// ───────── фон и графика на canvas ─────────
+const cv=$('cv'), X=cv.getContext('2d');
+const GLOW = { s_title:'#46E0FF', s_num:'#C8FF3E', s_bars:'#A58BFF', s_ui:'#FF4FB0' };
+function drawBg(t,id){
+  const g=X.createLinearGradient(0,0,0,1920); g.addColorStop(0,getComputedStyle(document.documentElement).getPropertyValue('--bg2')); g.addColorStop(1,getComputedStyle(document.documentElement).getPropertyValue('--bg'));
+  X.fillStyle=g; X.fillRect(0,0,1080,1920);
+  const r=X.createRadialGradient(540,900,0,540,900,900); r.addColorStop(0,(GLOW[id]||'#46E0FF')+'33'); r.addColorStop(1,'#0000');
+  X.fillStyle=r; X.fillRect(0,0,1080,1920);
+  X.fillStyle='rgba(255,255,255,.07)'; const off=(t*12)%60;               // точечная сетка, медленно плывёт
+  for(let y=-60+off;y<1920;y+=60) for(let x=30;x<1080;x+=60) X.fillRect(x,y,3,3);
+}
+// столбчатый график: данные → высоты, рост пружиной по очереди
+const BARS = [['янв',3],['фев',5],['мар',8],['апр',12]];
+function drawBars(t,t0,s){
+  // ширина 4×130 + 3×50 = 670 → x 205–875: правее x 900 на y 1100–1650 — кнопки соцсети; ниже y 1280 — субтитры
+  const bw=130, gap=50, x0=540-(BARS.length*bw+(BARS.length-1)*gap)/2, base=1200, H=500, mx=Math.max(...BARS.map(b=>b[1]));
+  X.save(); X.translate(540,960); X.scale(s,s); X.translate(-540,-960);
+  X.strokeStyle='rgba(255,255,255,.25)'; X.lineWidth=3; X.beginPath(); X.moveTo(150,base); X.lineTo(930,base); X.stroke();
+  BARS.forEach(([lab,v],i)=>{ const p=spr(t,t0+.25+i*.18,1.8,.55), h=H*v/mx*p, x=x0+i*(bw+gap);
+    const g=X.createLinearGradient(0,base-h,0,base); g.addColorStop(0,i===BARS.length-1?'#C8FF3E':'#46E0FF'); g.addColorStop(1,'#1E6FFF');
+    X.fillStyle=g; X.beginPath(); X.roundRect(x,base-h,bw,h,[22,22,0,0]); X.fill();
+    X.globalAlpha=clamp(p); X.fillStyle='#fff'; X.textAlign='center';
+    X.font='900 italic 64px "Inter Tight"'; X.fillText(fmt(v*Math.min(p,1)),x+bw/2,base-h-24);   // пружина перелетает за 1 — подпись не должна
+    X.font='500 34px "JetBrains Mono"'; X.fillStyle='#8C97AD'; X.fillText(lab.toUpperCase(),x+bw/2,base+50); X.globalAlpha=1; });
+  X.restore();
+}
+
+// ───────── субтитры: фраза до точки/вопроса/паузы > 0,5 с ─────────
+const PHR=[]; { let cur=[]; TL.words.forEach((w,i)=>{ cur.push(w); const nx=TL.words[i+1];
+  if(/[.!?…:]$/.test(w.w) || !nx || nx.t0-w.t1>.5){ PHR.push(cur); cur=[]; } }); }
+function captions(t){ const cap=$('cap'); if(!CAPS){ cap.innerHTML=''; return; }
+  const ph=PHR.find((p,i)=>t>=p[0].t0-.1 && (i===PHR.length-1 ? t<p.at(-1).t1+.6 : t<PHR[i+1][0].t0-.1));
+  // обёртка div: внутри flex-контейнера пробелы между span-ами схлопываются
+  cap.innerHTML = ph ? '<div>'+ph.map(w=>`<span class="${t<w.t0?'future':(t<w.t1?'now':'')}">${w.w}</span>`).join(' ')+'</div>' : ''; }
+
+// ───────── кадр: детерминированно от t (любой кадр рендерится независимо) ─────────
+window.renderAt = function(t){
+  window.T=t;
+  const act = SCN.filter(s=>t>=s[1] && t<s[2]);
+  const top = act.at(-1) || SCN[0];
+  drawBg(t, top[0]);
+  for(const s of SCN){ const el=$(s[0]); const on=act.includes(s); el.style.display=on?'block':'none';
+    if(on){ const {o,tf}=sceneTf(t,s); el.style.opacity=o; el.style.transform=tf; } }
+  // сцена 1: заголовок по буквам (начат до 0 — кадр 0 уже с текстом), ключевое слово — на «под»
+  charsIn($('t1'),t,-.35,.02); charsIn($('t2'),t,W('под',1,3.2));
+  // сцена 2: счётчик на «двенадцать»
+  { const a=W('двенадцать',1,5.25); $('num').textContent=fmt(12000*eio(P(t,a-.6,.9))); }
+  // сцена 3: график
+  if(act.some(s=>s[0]==='s_bars')){ const s=SCN[2]; charsIn($('tb'),t,s[1]+.1); drawBars(t,s[1],lerp(1.25,1,eo(P(t,s[1],.35)))); }
+  // сцена 4: уведомление съезжает сверху, рамка рисуется штрихом, тап
+  { const a=K.ui, p=spr(t,a+.2,1.8,.55); $('nt').style.transform=`translateY(${(1-p)*-260}px)`;
+    const hl=$('hl'), L=2*(480+146); hl.style.strokeDasharray=L; hl.style.strokeDashoffset=L*(1-eo(P(t,a+.7,.5)));
+    const tp=P(t,W('кодом',1,9.65),.45); $('tap').style.left='540px'; $('tap').style.top='480px';
+    $('tap').style.opacity=tp>0&&tp<1?1-tp:0; $('tap').style.transform=`scale(${.4+tp})`; }
+  captions(t);
+};
+// Шрифты грузить явно: браузер качает шрифт, только когда он появился в видимом DOM, —
+// для canvas и для скрытых сцен первые кадры иначе уйдут в системный шрифт. Сюда же — загрузка картинок.
+const FONTS=['500 40px "Inter Tight"','700 40px "Inter Tight"','800 40px "Inter Tight"','900 40px "Inter Tight"','italic 900 40px "Inter Tight"',
+             '500 40px "JetBrains Mono"','700 40px "JetBrains Mono"'];
+window.ready = Promise.all(FONTS.map(f=>document.fonts.load(f,'АБВ abc 0123'))).then(()=>document.fonts.ready).then(()=>{ renderAt(0); });
+if(!/render=1/.test(location.search)){ const t0=performance.now(); (function loop(){ renderAt(((performance.now()-t0)/1000)%END); requestAnimationFrame(loop); })(); }
+</script>
+</body>
+</html>

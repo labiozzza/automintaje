@@ -1,0 +1,22 @@
+FROM node:22.16.0-bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    HOME=/tmp/scene-home \
+    TMPDIR=/tmp \
+    REMOTION_DISABLE_TELEMETRY=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       chromium ffmpeg ca-certificates fonts-liberation fonts-noto-core fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/remotion
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev
+
+ENV PATH="/opt/remotion/node_modules/.bin:${PATH}" \
+    CHROME_PATH=/usr/bin/chromium \
+    REMOTION_DISABLE_TELEMETRY=1
+
+WORKDIR /workspace
+RUN mkdir -p /workspace && ln -s /opt/remotion/node_modules /workspace/node_modules && mkdir -p /workspace/src /workspace/assets /workspace/output

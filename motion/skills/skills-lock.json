@@ -1,0 +1,668 @@
+{
+  "schema_version": "motion-skills-lock.v1",
+  "source_archive": "Belyak_36_skills_OpenCode.zip",
+  "source_archive_sha256": "209c75ad4102b3ee7adb25ee7b982e4195370858d668300e8a4f24ab338ca398",
+  "skill_count": 36,
+  "storyboard_count": 30,
+  "skills": [
+    {
+      "id": "edit-beat",
+      "name": "edit-beat",
+      "description": "«Клип под бит» — монтаж своих видео (путешествие, город, событие, продукт, движение) под музыку без голоса или с короткими репликами — склейки на доли, speed-ramp на ударе, whip-pan и match cut, вспышки, слово на сильную долю, «слово за человеком». Использовать, когда присылают папку своих клипов и просят «тревел», «клип», «эдит», «нарезку под музыку», «как трейлер», «смонтируй красиво под трек».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/edit-beat/SKILL.md",
+      "skill_sha256": "005f0fd62d26928a005e895596ae9e9ea0eb211690e5d12f527f08ade744c0b9",
+      "storyboard_file": ".opencode/skills/edit-beat/storyboard.png",
+      "storyboard_sha256": "bd1b4bbe3556a6813172339e5c74f1c2ca4838e144dc0aa59d71c3044ba16955",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "edit-broll",
+      "name": "edit-broll",
+      "description": "«Вставки по смыслу» — B-roll под существительные и глаголы речи — J/L-каты, вставка окном или на весь кадр, match cut по форме и движению, Ken Burns на фото, подписи источников; баланс спикер/вставки и правила, где брать материал (свои съёмки, ТЗ клиента, Commons, генерации с пометкой). Использовать, когда есть говорящая голова и просят «добавить вставок», «перекрыть картинкой», «b-roll», «чтобы не было скучно смотреть на лицо», а также когда клиент присылает ТЗ со вставками по фразам.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/edit-broll/SKILL.md",
+      "skill_sha256": "11db87c9e2f4b612757201e1fc0c0252d719b81437e9da22dcf3231bc8221c00",
+      "storyboard_file": ".opencode/skills/edit-broll/storyboard.png",
+      "storyboard_sha256": "9785e6d1ec490dc09f2e3f8d5c13ac32074b64e09acd92772bfc8d53a6ff307f",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "edit-clones",
+      "name": "edit-clones",
+      "description": "«Двойники» — один человек в нескольких ролях в одном кадре — спорит сам с собой (автор и скептик), задаёт вопрос и отвечает, «внутренний голос» появляется рядом; композит дублей по маскам со штатива. Использовать, когда просят «спор с самим собой», «клон», «два меня в кадре», «скетч в одиночку», «диалог без второго актёра».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/edit-clones/SKILL.md",
+      "skill_sha256": "7d0a702798adfefa8dfc4baacaf23a01da766975ed868df8df12391642eb9700",
+      "storyboard_file": ".opencode/skills/edit-clones/storyboard.png",
+      "storyboard_sha256": "8dddb98f6df2e34bbfe6f2e7ed5b85fc9cc86360330fa5037b124bb9163dddf6",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "edit-depth",
+      "name": "edit-depth",
+      "description": "«Слои глубины» — по маске человека разводим кадр на фон и спикера и вставляем графику между ними — текст за головой, голова выходит из рамки, мир за спиной меняется на ключевом слове, фон уходит в размытие/темноту. Использовать, когда просят «текст за человеком», «голова вылезает из рамки», «поменять фон за спикером», «эффект глубины», «как у топовых блогеров».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/edit-depth/SKILL.md",
+      "skill_sha256": "497fefa533fe70c3708405bcda3110bba537db286a22e20ff590278dd87045eb",
+      "storyboard_file": ".opencode/skills/edit-depth/storyboard.png",
+      "storyboard_sha256": "c17b38eced721d1f82072a8fb946bc353466f7c640800e509d735a317bed31bd",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "edit-doodle",
+      "name": "edit-doodle",
+      "description": "«Рисунок поверх видео» — анимированные каракули от руки на реальном видео с частотой 12 fps — дрожащая обводка по контуру человека, стрелки, корона, звёзды, восклицательные знаки, подписи маркером, зачёркивания; появляются на ключевых словах. Использовать, когда просят «нарисованные элементы поверх видео», «дудлы», «обводка человека», «как будто фломастером по видео», «живее и смешнее без мемов».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/edit-doodle/SKILL.md",
+      "skill_sha256": "5bb93924611b9aa681fbde1c1b93f292fd44f928c488d485a74fd8ef1e511871",
+      "storyboard_file": ".opencode/skills/edit-doodle/storyboard.png",
+      "storyboard_sha256": "05b062ba835d3efd8319d8f2ba887309226e3e37670ae7b555dec584bad8cfc9",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "edit-freeze",
+      "name": "edit-freeze",
+      "description": "«Стоп-кадр и разбор» — видео замирает, кадр темнеет, появляются лупа, выноски, подписи и стрелки, потом перемотка назад (VHS rewind) или продолжение; разбор жестов, ошибок, деталей в кадре, «посмотрите на руку», «это я», «запись с камеры». Использовать, когда просят «стоп-кадр», «заморозить и подписать», «разобрать момент», «перемотать назад», «как в разборах ошибок / спортивных разборах».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/edit-freeze/SKILL.md",
+      "skill_sha256": "f34869ec8f030b21867150ba64991b9e04571da68c762bd5c4724e27f4c64875",
+      "storyboard_file": ".opencode/skills/edit-freeze/storyboard.png",
+      "storyboard_sha256": "a3959ab60095a857585f0ed543d1f355ab4a4d1dd6b2ad186e434fd01107ae4e",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "edit-greenscreen",
+      "name": "edit-greenscreen",
+      "description": "«Реакция на фоне» — спикер вырезан по маске и стоит поверх того, о чём говорит — статьи, твита, комментария, сайта, чужого ролика, документа; фон скроллится, нужные строки подсвечиваются маркером, спикер указывает на них. Формат TikTok green screen. Использовать, когда просят «разбор новости», «ответ на комментарий», «реакцию», «говорю на фоне статьи/скрина», «как в тиктоке с зелёным экраном».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/edit-greenscreen/SKILL.md",
+      "skill_sha256": "2b8f9a51363ed32c774093b3f7b38842b987aa0cf6a93a8f8432e22008238a2b",
+      "storyboard_file": ".opencode/skills/edit-greenscreen/storyboard.png",
+      "storyboard_sha256": "fc49a25fb677374ece5b8c5691166c3d4e6cd329887afe3f617cb58f6375767c",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "edit-multicam",
+      "name": "edit-multicam",
+      "description": "«Две камеры из одной» — из одного широкого кадра режем общий, средний, крупный и деталь (руки, микрофон, экран ноутбука) и переключаем их по смыслу, как подкаст с несколькими камерами; плюс второй реальный угол, если есть (запись экрана, телефон сбоку). Использовать, когда спикер снят одной камерой и ролик выглядит статично, просят «как подкаст», «несколько ракурсов», «чтобы картинка менялась без вставок».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/edit-multicam/SKILL.md",
+      "skill_sha256": "669583e67495e0259a00ef5fa8ce2d259783c2f6bce8570589a501fce155a05d",
+      "storyboard_file": ".opencode/skills/edit-multicam/storyboard.png",
+      "storyboard_sha256": "bfa7806722e6a6125bbce97655776770796cd7e059ecd8fade7dd082a2dd661d",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "edit-screen-demo",
+      "name": "edit-screen-demo",
+      "description": "«Экран + голова» — монтаж записи экрана (OBS, QuickTime, телефон) с говорящей головой — кружок или карточка спикера, автозум к курсору и кликам, подсветка области, размытие лишнего и личного, ускорение скучных отрезков с бейджем ×4, клики со звуком. Использовать, когда показывают приложение, сайт, нейросеть, настройку, «как я это сделал», гайд по интерфейсу на реальной записи экрана, обзор сервиса.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/edit-screen-demo/SKILL.md",
+      "skill_sha256": "063dffc20bd43e0167a55c4531cf25277aa255a8aeb2960c43364417cfd1fce9",
+      "storyboard_file": ".opencode/skills/edit-screen-demo/storyboard.png",
+      "storyboard_sha256": "6caf18162f5fdb12bcb9b4ba5dd491ff0d9fc0731a9593451d0c55d45179546f",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "edit-talking-cut",
+      "name": "edit-talking-cut",
+      "description": "«Чистый ритм» — база монтажа реального видео со спикером: синхрон камеры и микрофона, выбор дублей по суфлёру, джамп-каты по тишине, ступенчатые punch-in на смене мысли (без трекинга), J/L-каты, субтитры по словам, кадры и маски для HTML-сцен. Использовать, когда присылают съёмку говорящей головы (Беляк, интервью, блог, «говорю в камеру») и просят смонтировать, почистить, «сделать динамичнее», а также как первый шаг для всех скиллов edit-* (multicam, depth, greenscreen, clones, doodle, freeze, broll, screen-demo).",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/edit-talking-cut/SKILL.md",
+      "skill_sha256": "f6c7f47a4d22d8022caa4888bd8e8a87e8456c49a46aaf5b97169532a4cb24d2",
+      "storyboard_file": ".opencode/skills/edit-talking-cut/storyboard.png",
+      "storyboard_sha256": "5525708f5db2d0adbc821b13a53a90a7573eebdae0ff0856b070dcfea4bb9e29",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-3d-motion",
+      "name": "video-3d-motion",
+      "description": "«3D Motion» — объёмные карточки, графики и стопки источников с небольшими 3D-поворотами (до 25°) вокруг спикера; глубина без потери читаемости; спикер вырезкой спереди. Использовать, когда просят «3D», «объёмно», «дорого и технологично», «карточки вращаются», для продуктовых и техно-роликов без генераций.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-3d-motion/SKILL.md",
+      "skill_sha256": "377d916a8907837cdbaf616f9956f750253a98285967a91bc84ae456220d9a16",
+      "storyboard_file": ".opencode/skills/video-3d-motion/storyboard.png",
+      "storyboard_sha256": "c91ca827c84ec6ec189729540e27de8e0799f5b596e99c0a77ff683297b5b44a",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-apple-clean",
+      "name": "video-apple-clean",
+      "description": "«Apple Clean» — премиальный минимализм, светло-серый фон, одна мысль на сцену, чистые карточки функций, большая итоговая метрика, мягкие анимации 0,4–0,7 с; спикер в скруглённой карточке. Использовать, когда просят «как у Apple», «минимализм», «премиально», «чисто и дорого», продуктовую часть ролика про приложение или сервис.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-apple-clean/SKILL.md",
+      "skill_sha256": "75b7daf4c4a965c91619f3df54989c34e840317df6340c9edde71cd0e3383238",
+      "storyboard_file": ".opencode/skills/video-apple-clean/storyboard.png",
+      "storyboard_sha256": "bf5c16e88888e449393cbac8e7fe8d8587ccdb332cc114a603e70cfc6df3e659",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-cinematic-story",
+      "name": "video-cinematic-story",
+      "description": "«Cinematic Story» — кинематографичный рассказ — шторки 2.39:1, тёплая единая коррекция, мелкие субтитры курсивом, атмосферные B-roll, музыкальные акценты и драматические паузы, которые не режем. Использовать, когда просят «кинематографично», «как фильм», «атмосферно», «эмоционально», для начала и финала ролика.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-cinematic-story/SKILL.md",
+      "skill_sha256": "5125ad45a31f7af06d8b17d17a6f6c41c303351d01e994150fb63d7171ef4616",
+      "storyboard_file": ".opencode/skills/video-cinematic-story/storyboard.png",
+      "storyboard_sha256": "7fa1be0299c8d4d9eec28bfacd038bd85bba5f382fe84054f714b8c452c4b8ff",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-collage-scrapbook",
+      "name": "video-collage-scrapbook",
+      "description": "«Collage / Scrapbook» — бумажный коллаж — лист с вопросом от руки, скотч, распечатки-фото с белыми полями, вырезка спикера с белой обводкой, газетные буквы-вырезки в заголовке, стоп-моушен 12 кадров/с, ограниченная палитра бумаги. Использовать, когда просят «коллаж», «скрапбук», «газетные вырезки», «бумажный стиль», «как из журнала».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-collage-scrapbook/SKILL.md",
+      "skill_sha256": "4b7b01024bfde6078c756a3e80911494ebd05154a1fb778929c74a9bdf57ed81",
+      "storyboard_file": ".opencode/skills/video-collage-scrapbook/storyboard.png",
+      "storyboard_sha256": "b46c05bc75d0cf2a7b65948913a0ef65676c4e31bb2db5ec56cc2200d7052852",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-data-motion",
+      "name": "video-data-motion",
+      "description": "«Data Motion» — динамическая инфографика поверх рассказа — линия графика рисуется, счётчики, сравнение двух столбцов, вердикт; цифры только из источника, с подписями осей, единиц и ссылкой. Использовать, когда в тексте есть цифры, проценты, динамика, сравнение «заявление против данных», просят «графики», «инфографику», «покажи цифрами».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-data-motion/SKILL.md",
+      "skill_sha256": "73c899d8e400e274216d02ff2c2eb924a6cb16d2df4aac1c8b8a9a45262c58b4",
+      "storyboard_file": ".opencode/skills/video-data-motion/storyboard.png",
+      "storyboard_sha256": "7e462f53b5bf1db9a960cfda76132c7aa3ac33c922a0f779825c85fd72caf535",
+      "auxiliary_files": [],
+      "status": "partial",
+      "modes": [
+        "overlay"
+      ],
+      "executors": [
+        "data_chart",
+        "counter"
+      ],
+      "limits": [
+        "Values must be evidenced; time-series choreography is not implemented."
+      ]
+    },
+    {
+      "id": "video-documentary-reel",
+      "name": "video-documentary-reel",
+      "description": "«Documentary Reel» — документальный рилс: рассказчик с плашкой имени, архивные документы и фото с параллаксом, схематичные карты, подпись источника на каждой вставке, приглушённая коррекция. Использовать, когда просят «документалку», «как документальный фильм», «с архивами», «история с источниками», ролик про реальные события и документы.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-documentary-reel/SKILL.md",
+      "skill_sha256": "dcfd58b3a5b2b5341e82d6721f222f3601b5cdb2ac80cb6e764a6c8821b927c5",
+      "storyboard_file": ".opencode/skills/video-documentary-reel/storyboard.png",
+      "storyboard_sha256": "9bbed7b69d3e994fdb1a9e9e90562256f7452f3e76ba32e8ce0e06233cdbe39e",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-fireship-tech",
+      "name": "video-fireship-tech",
+      "description": "«Fireship Tech» — сверхбыстрый техно-монтаж — смена визуала каждые 1–3 с, моноширинный шрифт, логотип и окно браузера, код с подсветкой (псевдокод помечен), мем на полсекунды, финальные плюсы и минусы. Использовать, когда ролик про ИИ, приложение, сервис, технологию, просят «как Fireship», «гиковски», «быстро про технологию», «с кодом».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-fireship-tech/SKILL.md",
+      "skill_sha256": "add917fc783d0c52bf48cae5494c133c6bf01a1e041c70486a10ce6e79f0c7d8",
+      "storyboard_file": ".opencode/skills/video-fireship-tech/storyboard.png",
+      "storyboard_sha256": "d2ef4dc23016ecf7bdbad3d19c72d329bae2bf224238dd2f18fd22cb15224470",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-floating-motion",
+      "name": "video-floating-motion",
+      "description": "«Floating Motion» — спикер на весь кадр, вокруг на ключевых словах всплывают карточки, цифры, стрелки и пунктирные линии-связки; лицо никогда не закрыто; часть карточек уходит за спину спикера по маске. Использовать, когда просят «карточки вокруг меня», «инфографика вокруг спикера», «чтобы всё летало вокруг», «floating cards».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-floating-motion/SKILL.md",
+      "skill_sha256": "4a5bd1e9c300ed7633f58f69425e1f83600719aedf0b346a5e0a6844ab880616",
+      "storyboard_file": ".opencode/skills/video-floating-motion/storyboard.png",
+      "storyboard_sha256": "53a5ea2f77e2bf63d80e41bfaf599987ac28ad1a000fcdbd9f7bb6710e0f9862",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-graphics",
+      "name": "video-graphics",
+      "description": "Моушен-графика и инфографика кодом для роликов — какую форму брать под данные (одна цифра, сравнение, доля, динамика, география, процесс, шаги), готовые фрагменты на canvas/DOM (счётчик, одометр, столбцы, кольцо доли, линия графика, 100 точек, карта, разрез, телефон и окно браузера, курсор с кликом, рамка-подсветка, выноска, табло), переходы и прерывания. Все блоки детерминированы от времени t и привязываются к словам озвучки. Использовать, когда в сцене надо показать число, сравнение, долю, график, карту, схему, интерфейс или шаги инструкции.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-graphics/SKILL.md",
+      "skill_sha256": "87c282961ed0090dd8fa8ddbf82566dca2637a3173d9bdc3900659928b33b0f8",
+      "storyboard_file": null,
+      "storyboard_sha256": null,
+      "auxiliary_files": [],
+      "status": "partial",
+      "modes": [
+        "overlay"
+      ],
+      "executors": [
+        "kinetic_sequence",
+        "process_flow",
+        "shape",
+        "data_chart"
+      ],
+      "limits": [
+        "Data charts require transcript- or user-confirmed source values."
+      ]
+    },
+    {
+      "id": "video-hormozi-style",
+      "name": "video-hormozi-style",
+      "description": "«Hormozi Style» — агрессивный темп говорящей головы — склейки каждые 1–3 с, punch-in 115/130/170 % на ударениях, огромные субтитры с чёрной обводкой и жёлтым/зелёным ключевым словом. Использовать, когда просят «как Хормози», «быстро и агрессивно», «огромные субтитры», «жёсткие джамп-каты», «бизнес-рилс».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-hormozi-style/SKILL.md",
+      "skill_sha256": "7a1928649ab2992d938edcfd59d23e0be805b61ad3226f3590eeb21c758d19be",
+      "storyboard_file": ".opencode/skills/video-hormozi-style/storyboard.png",
+      "storyboard_sha256": "8f76375203fcce83acacfc2e5291fe2959d2cf4e74e853a16281795b1ee2e481",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-images",
+      "name": "video-images",
+      "description": "Картинки для моушен-роликов — что генерировать, а что рисовать кодом; генерация через OpenAI Images (фоны, предметы, вырезки на прозрачном), правка с сохранением композиции для переходов «было → стало», единый стиль через эталонную картинку, правила промптов и запреты, обработка (обрезка по альфе, рентген-контуры, вставка в сцену), оживление кадров видеомоделями. Использовать, когда сцене нужен фон, предмет, фото, иллюстрация или обложка.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-images/SKILL.md",
+      "skill_sha256": "ebaf7be73f2e8f80c27d501fb2f9df7cbb40f3761d4d2368b2869ae1f3e685c8",
+      "storyboard_file": null,
+      "storyboard_sha256": null,
+      "auxiliary_files": [
+        ".opencode/skills/video-images/scripts/gen_image.py"
+      ],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-infographic-cards",
+      "name": "video-infographic-cards",
+      "description": "«Infographic Cards» — серия анимированных карточек фактов — топ-3, сравнение двух подходов, итоговая карточка; одна карточка — одна мысль, крупно и читаемо на телефоне. Использовать, когда в тексте перечисление, шаги, «топ», сравнение, итоги, просят «карточками», «инфографика карточками», «по пунктам».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-infographic-cards/SKILL.md",
+      "skill_sha256": "3c268396c4d9e3175f592c353dd6e72fb54b55e76f2da826fe62f06f8e03ded8",
+      "storyboard_file": ".opencode/skills/video-infographic-cards/storyboard.png",
+      "storyboard_sha256": "3d1e7ac91c1a53229a622e1df3219e54afe2a2ca93797123fa5ffef00c0bf00e",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-kinetic-typography",
+      "name": "video-kinetic-typography",
+      "description": "«Kinetic Typography» — огромные анимированные слова на весь экран (1–5 слов на кадр), число заполняет экран, финал — глагол действия; спикер маленьким кружком. Использовать, когда просят «крупный текст на весь экран», «кинетическая типографика», «слова прыгают», когда вставок мало, а речь ударная.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-kinetic-typography/SKILL.md",
+      "skill_sha256": "d0650fd7dc54fcbc53d991628bfb229ae34c99190c83e7b3fab2494292b7eff4",
+      "storyboard_file": ".opencode/skills/video-kinetic-typography/storyboard.png",
+      "storyboard_sha256": "f36110d877665507c21c58b502223b4100246adfd4f227e17398df1d3c65b95e",
+      "auxiliary_files": [],
+      "status": "partial",
+      "modes": [
+        "overlay"
+      ],
+      "executors": [
+        "kinetic_sequence"
+      ],
+      "limits": [
+        "Fixed-timeline scenes only; no full-scene typography takeover yet."
+      ]
+    },
+    {
+      "id": "video-meme-editor",
+      "name": "video-meme-editor",
+      "description": "«Meme Editor» — говорящая голова с мем-реакциями на 0,4–1,5 с, резкими зумами 130 %, плашками-стикерами и комедийными паузами; мем — только в смешных местах и только из разрешённых источников. Использовать, когда просят «добавь мемов», «смешно», «с мемами», «реакции», «как мем-эдит».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-meme-editor/SKILL.md",
+      "skill_sha256": "a8dedd6b7584a8439e7c95d4dfd889532ff5fd4fb3b3aba2edd009ed46012fb9",
+      "storyboard_file": ".opencode/skills/video-meme-editor/storyboard.png",
+      "storyboard_sha256": "4c46611d8335b8587e0c5904a8f7f3bc58d0eaa9f6141b2b2d6b10ddf96a137d",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-montage",
+      "name": "video-montage",
+      "description": "Монтаж моушен-ролика кодом — HTML/canvas-страница с детерминированной функцией renderAt(t), сцены привязаны к словам озвучки, кинетическая типографика, субтитры, безопасные зоны Reels/TikTok/Shorts, листы кадров для проверки, покадровый рендер через Playwright в mp4 и точечный перерендер кусков. Использовать, когда есть озвучка с тайм-кодами (или без голоса) и надо собрать сцены, проверить кадры и отрендерить видео.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-montage/SKILL.md",
+      "skill_sha256": "5144327e728860418b71bdc3f74e402d16f8dfef7b34477a052bcb2dc9f3c58a",
+      "storyboard_file": null,
+      "storyboard_sha256": null,
+      "auxiliary_files": [
+        ".opencode/skills/video-montage/scripts/render.js",
+        ".opencode/skills/video-montage/scripts/sheet.sh",
+        ".opencode/skills/video-montage/templates/scene.html"
+      ],
+      "status": "partial",
+      "modes": [
+        "overlay"
+      ],
+      "executors": [
+        "kinetic_sequence",
+        "callout",
+        "process_flow"
+      ],
+      "limits": [
+        "Uses Remotion deterministic frame time; source cuts remain immutable."
+      ]
+    },
+    {
+      "id": "video-podcast-viral",
+      "name": "video-podcast-viral",
+      "description": "«Podcast Viral» — нарезка подкаста или длинного разговора в рилс на 20–60 с — крупный план с микрофоном, сильная цитата в рамке, субтитры по словам с плашкой, punch-in на финальном аргументе. Использовать, когда присылают подкаст, интервью, стрим, длинную запись и просят «нарезать виральный кусок», «клип из подкаста», «цитату».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-podcast-viral/SKILL.md",
+      "skill_sha256": "5a22a4a891c4ae2611dd6ce808863dcda7f24773ae2f5fd415e9ee2cb0c0af51",
+      "storyboard_file": ".opencode/skills/video-podcast-viral/storyboard.png",
+      "storyboard_sha256": "0c61ec56b289636f123a483a1031069f00f1c9d0b06db201919a63bfb919809b",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-popout-head",
+      "name": "video-popout-head",
+      "description": "«Popout Head» — спикер в рамке-окне, голова и плечи выходят за верхний край рамки поверх графики; за рамкой может стоять крупное слово, перед ней — плашка-вывод. Использовать, когда просят «голова вылезает из рамки», «выход из кадра», «popout», «как у Беляка голова из карточки».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-popout-head/SKILL.md",
+      "skill_sha256": "2ca846d673680cb014a12118dd8d556d0d0e8d7928b8e2e374e2197ab8803235",
+      "storyboard_file": ".opencode/skills/video-popout-head/storyboard.png",
+      "storyboard_sha256": "3f417eb7048599395c34a0e0d99d5a502b574635d84e3af050f68d702420bac2",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-retro-news",
+      "name": "video-retro-news",
+      "description": "«Retro News» — ретро-выпуск новостей — заставка с цветными полосами, VHS-шум и строки, спикер-ведущий в кадре с нижней плашкой и бегущей строкой, REC, финал «выключение кинескопа»; всё стилизованное подписано. Использовать, когда просят «как старые новости», «VHS», «ретро ТВ», «экстренный выпуск», ролик про политику и новости в ироничной подаче.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-retro-news/SKILL.md",
+      "skill_sha256": "e33daa04f500caf2faffa1c230277530bd97c8a4cb926c977f55dacc4ffbe073",
+      "storyboard_file": ".opencode/skills/video-retro-news/storyboard.png",
+      "storyboard_sha256": "900cc86faa8c9c873b28c9a400e7e708f4b5d926771be7f1d56a7a5a0eb5f35d",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-split-screen",
+      "name": "video-split-screen",
+      "description": "«Split Screen 50/50» — вертикальный рилс пополам — сверху меняется графика, вставка или запись экрана (каждые 2–5 с по словам), снизу спикер ровно на половину кадра, шов — тонкая акцентная линия. Использовать, когда просят «экран сверху, я снизу», «пополам», «split screen», «как у Беляка, но без головы из карточки», обзор сайта, новости, продукта с говорящей головой.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-split-screen/SKILL.md",
+      "skill_sha256": "ff2774366e8bd420185e7e6e3f0257ec264d7d4632a50f484632765966e662f7",
+      "storyboard_file": ".opencode/skills/video-split-screen/storyboard.png",
+      "storyboard_sha256": "b02ce912a32555c6f38b1af3f13a0c864a6bb4debdaedfbd6472713fb3e1fe9c",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-studio",
+      "name": "video-studio",
+      "description": "Оркестратор видеостудии на Claude Code — общий вход для любой работы с роликом (Reels/Shorts/TikTok 9:16, гайд или презентация 16:9, реклама продукта, сторис). Ведёт по конвейеру «бриф → текст → озвучка → ассеты → сцены → проверка → рендер → звук → выдача» и передаёт шаги скиллам video-voice, video-images, video-graphics, video-styles и video-montage. Использовать, когда просят «сделай ролик / видео / рилс / моушен / видеогайд / видеопрезентацию», присылают тему, бриф, референс или озвучку.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-studio/SKILL.md",
+      "skill_sha256": "57a409f0a101527c1ee5e87acc9d2b551634e21de64152e3b9d3c8ce8235d9dd",
+      "storyboard_file": null,
+      "storyboard_sha256": null,
+      "auxiliary_files": [],
+      "status": "partial",
+      "modes": [
+        "overlay"
+      ],
+      "executors": [
+        "motion_director",
+        "scene_graph_v2"
+      ],
+      "limits": [
+        "No generated voice or external B-roll in this release."
+      ]
+    },
+    {
+      "id": "video-styles",
+      "name": "video-styles",
+      "description": "Каталог проверенных визуальных стилей для моушен-роликов — палитры (hex), шрифты с кириллицей, движение, звук и когда какой брать: тёмный неон, научный рентген-разрез, «карточки и миры», пиксельные герои, клип-эссе с красным словом, сюр-коллаж, светлый «госсервис», Apple-минимализм, аварийная памятка, нуар, немой разрез «плохо / хорошо», корпоративный гайд, необрутализм. Плюс метод разбора чужого референса в дизайн-код. Использовать, когда выбирают стиль ролика, присылают референс «хочу так же», просят сделать светлее/динамичнее/по-другому.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-styles/SKILL.md",
+      "skill_sha256": "6ffd765605402073bc85bc7b194ee6df22701accc4f6f6d7fc93ecb1632427dc",
+      "storyboard_file": null,
+      "storyboard_sha256": null,
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-timeline-story",
+      "name": "video-timeline-story",
+      "description": "«Timeline Story» — история по шкале времени — горизонтальная линия, отметки событий с подписанными датами или таймкодами, камера едет по шкале, финальная отметка «сейчас» светится. Использовать, когда рассказ хронологический, просят «таймлайн», «по годам», «история в датах», «как всё развивалось», или процесс по секундам.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-timeline-story/SKILL.md",
+      "skill_sha256": "cc39894515c0abb8a2157cd1737350226e83d099b58b2e56416e1ac10272b4e0",
+      "storyboard_file": ".opencode/skills/video-timeline-story/storyboard.png",
+      "storyboard_sha256": "528961cc5d99e142ee1ed1fdf26fa5593fa1c858db245081d8d47be8d9eb8243",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-ui-showcase",
+      "name": "video-ui-showcase",
+      "description": "«UI Showcase» — интерфейс на весь экран, спикер маленьким кружком в углу; курсор, зум ×2 и подсветка ведут взгляд по настоящей записи экрана; экран результата в финале; ничего не рисуем за продукт. Использовать, когда просят «покажи интерфейс», «демо приложения», «обзор сервиса на весь экран», «я в кружочке, экран на весь кадр».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-ui-showcase/SKILL.md",
+      "skill_sha256": "a3f9c0a982fa832c3fbd94648ca8c870a55f776a8ec58975ed8c53271f102af4",
+      "storyboard_file": ".opencode/skills/video-ui-showcase/storyboard.png",
+      "storyboard_sha256": "eaa2519954034223a7f645dc3c4e833992b16458787a4599451926f0eff3b679",
+      "auxiliary_files": [],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-voice",
+      "name": "video-voice",
+      "description": "Голос и звук для моушен-ролика — подготовка текста к нейроозвучке (ElevenLabs и др.: теги эмоций, ударения, паузы), пословные тайм-коды через whisper, ускорение голоса и сокращение пауз с пересчётом таймлайна, подстановка точного текста в субтитры, выбор музыки и звуков, сведение с приглушением музыки под голосом и нормализацией −14 LUFS. Использовать, когда готовят текст к записи, пришла озвучка, нужно ускорить голос, сделать субтитры по словам или свести звук ролика.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-voice/SKILL.md",
+      "skill_sha256": "e93ac74f608b2dac2232596de7ae838a234d27a8c6bb783ad49230d6d7da9780",
+      "storyboard_file": null,
+      "storyboard_sha256": null,
+      "auxiliary_files": [
+        ".opencode/skills/video-voice/scripts/mix.sh",
+        ".opencode/skills/video-voice/scripts/retime.py",
+        ".opencode/skills/video-voice/scripts/words.py"
+      ],
+      "status": "reference_only",
+      "modes": [],
+      "executors": [],
+      "limits": [
+        "Methodology and storyboard reference only; no production executor registered."
+      ]
+    },
+    {
+      "id": "video-vox-explainer",
+      "name": "video-vox-explainer",
+      "description": "«Vox Explainer» — объясняющий рилс в духе Vox — бумажная фактура, жёлтый маркер, карты с отметками, причинно-следственные схемы, которые рисуются по фразам, спикер вырезкой сбоку. Использовать, когда просят «объясни как Vox», «со схемой», «с картой», «как это работает», разбор механизма или причин.",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-vox-explainer/SKILL.md",
+      "skill_sha256": "2b60ed4e94ee66cd5662d1d6c3e3f485d3c7b61e52a9892aa0fe025fc5b19cd7",
+      "storyboard_file": ".opencode/skills/video-vox-explainer/storyboard.png",
+      "storyboard_sha256": "ce5f38f2a227b4a614aa2574360bb4143eaa685f648c0065011fe2043e59d653",
+      "auxiliary_files": [],
+      "status": "partial",
+      "modes": [
+        "overlay"
+      ],
+      "executors": [
+        "process_flow",
+        "kinetic_sequence"
+      ],
+      "limits": [
+        "Map geometry and unsupported external sources are reference-only."
+      ]
+    },
+    {
+      "id": "video-whiteboard",
+      "name": "video-whiteboard",
+      "description": "«Whiteboard» — объяснение на светлой доске — вопрос и блок-схемы пишутся маркером от руки синхронно с речью, не больше 5 элементов, нужный пункт выделяется жёлтым маркером; спикер кружком в углу. Использовать, когда просят «нарисуй на доске», «рисованная схема», «вайтборд», «объясни по-простому со схемой».",
+      "frontmatter_valid": true,
+      "skill_file": ".opencode/skills/video-whiteboard/SKILL.md",
+      "skill_sha256": "3f787723f9d2d733d9e58f7619a29f3000ea7dfdde543b911dd421eda5884c08",
+      "storyboard_file": ".opencode/skills/video-whiteboard/storyboard.png",
+      "storyboard_sha256": "5cf9d497e8fd9203fa1c603d15e0600fd9bffdeb41f97251b75d9cfd0ffa12c1",
+      "auxiliary_files": [],
+      "status": "partial",
+      "modes": [
+        "overlay"
+      ],
+      "executors": [
+        "kinetic_sequence",
+        "line_draw"
+      ],
+      "limits": [
+        "Only supported vector primitives are rendered; no freehand image tracing."
+      ]
+    }
+  ]
+}

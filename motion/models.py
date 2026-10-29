@@ -24,6 +24,7 @@ EFFECT_TYPES = {
     "callout",
     "shape",
     "mask_reveal",
+    "kinetic_sequence",
 }
 PROFILES = {"minimal", "financial", "tech-ui", "editorial", "custom"}
 INTENSITIES = {"minimal", "balanced", "expressive"}
@@ -153,6 +154,12 @@ class MotionScene(StrictModel):
                 raise ValueError("process flow requires between 2 and 6 text steps")
         if self.effect_type == "shape" and self.content.get("shape") not in SHAPE_TYPES:
             raise ValueError("shape effect requires a supported primitive shape")
+        if self.effect_type == "kinetic_sequence":
+            graph = self.content.get("motion_graph")
+            if not isinstance(graph, dict) or graph.get("version") != 2:
+                raise ValueError("kinetic_sequence requires a compiled motion graph v2")
+            if not isinstance(graph.get("layers"), list) or not graph["layers"] or not isinstance(graph.get("tracks"), list):
+                raise ValueError("kinetic_sequence requires typed layers and tracks")
         return self
 
 
@@ -220,6 +227,39 @@ class ScenePatchInput(StrictModel):
         if self.action == "revise" and not self.feedback and self.scene is None:
             raise ValueError("revise requires feedback or a replacement scene")
         return self
+
+
+class GenerateSceneInput(StrictModel):
+    model: str = Field(min_length=3, max_length=100)
+    expected_revision: int = Field(ge=1)
+    request_id: str = Field(min_length=1, max_length=100)
+    comment: str = Field(default="", max_length=2000)
+    mode: Optional[Literal["overlay", "scene_takeover"]] = None
+    start_ms: Optional[int] = Field(default=None, ge=0)
+    end_ms: Optional[int] = Field(default=None, gt=0)
+
+    @field_validator("model")
+    @classmethod
+    def valid_engineer_model(cls, value):
+        value = value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.:-]+", value):
+            raise ValueError("model must be provider/model")
+        return value
+
+    @model_validator(mode="after")
+    def valid_requested_interval(self):
+        if (self.start_ms is None) != (self.end_ms is None):
+            raise ValueError("start_ms and end_ms must be supplied together")
+        if self.start_ms is not None and self.end_ms - self.start_ms < 400:
+            raise ValueError("scene preview interval must be at least 400ms")
+        return self
+
+
+class SceneArtifactReviewInput(StrictModel):
+    expected_revision: int = Field(ge=1)
+    scene_revision: int = Field(ge=1)
+    decision: Literal["accept", "reject"]
+    request_id: str = Field(min_length=1, max_length=100)
 
 
 class ApproveInput(StrictModel):

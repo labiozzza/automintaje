@@ -32,6 +32,25 @@ export type MotionPlanProps = {
   previewDurationMs?: number;
 };
 
+type GraphLayer = {
+  id: string;
+  kind: 'text' | 'shape' | 'line';
+  geometry: {x: number; y: number; w: number; h: number};
+  text?: string;
+  shape?: 'circle' | 'rounded_rect' | 'arrow' | 'underline' | 'bracket';
+  color?: 'accent' | 'ink' | 'muted' | 'white';
+  font_size_px?: number;
+  font_weight?: number;
+  align?: 'left' | 'center' | 'right';
+};
+
+type GraphTrack = {
+  layer_id: string;
+  property: 'opacity' | 'x' | 'y' | 'scale' | 'draw_progress';
+  easing: 'linear' | 'ease_out' | 'ease_in_out';
+  keyframes: Array<{at_ms: number; value: number}>;
+};
+
 const palette: Record<string, {accent: string; panel: string; ink: string}> = {
   minimal: {accent: '#F4C95D', panel: 'rgba(13, 18, 28, 0.92)', ink: '#FFFFFF'},
   financial: {accent: '#5DD39E', panel: 'rgba(9, 27, 29, 0.94)', ink: '#FFFFFF'},
@@ -133,6 +152,88 @@ const TextEffect: React.FC<{scene: MotionScene}> = ({scene}) => {
         {subtitle && <div style={{fontSize: 42 * scale, lineHeight: 1.2, marginTop: '2%'}}>{subtitle}</div>}
       </Card>
       </div>
+    </SceneFrame>
+  );
+};
+
+const KineticSequence: React.FC<{scene: MotionScene}> = ({scene}) => {
+  const {width, fps} = useVideoConfig();
+  const frame = useCurrentFrame();
+  const graph = (scene.content.motion_graph || {}) as {
+    layers?: GraphLayer[];
+    tracks?: GraphTrack[];
+    style_bible?: Record<string, unknown>;
+  };
+  const layers = graph.layers || [];
+  const tracks = graph.tracks || [];
+  const localMs = frame * 1000 / fps;
+  const scale = width / 1080;
+  const bible = graph.style_bible || {};
+  const graphPalette: Record<string, string> = {
+    accent: asText(bible.accent, '#F4C95D'),
+    ink: asText(bible.ink, '#FFFFFF'),
+    muted: asText(bible.muted, 'rgba(255,255,255,.65)'),
+    white: '#FFFFFF',
+  };
+  const valueAt = (track: GraphTrack | undefined, fallback: number) => {
+    if (!track?.keyframes?.length) return fallback;
+    const points = track.keyframes;
+    if (localMs <= points[0].at_ms) return points[0].value;
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      if (localMs <= b.at_ms) {
+        const easing = track.easing === 'linear' ? Easing.linear
+          : track.easing === 'ease_in_out' ? Easing.inOut(Easing.cubic) : Easing.out(Easing.cubic);
+        return interpolate(localMs, [a.at_ms, b.at_ms], [a.value, b.value], {
+          extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing,
+        });
+      }
+    }
+    return points[points.length - 1].value;
+  };
+  return (
+    <SceneFrame scene={scene}>
+      <AbsoluteFill style={{overflow: 'hidden'}}>
+        {layers.map((layer) => {
+          const rect = layer.geometry;
+          const ownTracks = tracks.filter((track) => track.layer_id === layer.id);
+          const track = (property: GraphTrack['property']) => ownTracks.find((item) => item.property === property);
+          const x = valueAt(track('x'), rect.x);
+          const y = valueAt(track('y'), rect.y);
+          const opacity = valueAt(track('opacity'), 1);
+          const scaleValue = valueAt(track('scale'), 1);
+          const draw = valueAt(track('draw_progress'), 1);
+          const color = graphPalette[layer.color || 'accent'];
+          const common: React.CSSProperties = {
+            position: 'absolute', left: `${x * 100}%`, top: `${y * 100}%`,
+            width: `${rect.w * 100}%`, height: `${rect.h * 100}%`,
+            opacity, transform: `scale(${scaleValue})`, transformOrigin: 'center',
+            boxSizing: 'border-box', color, display: 'flex', alignItems: 'center',
+            justifyContent: layer.align || 'center', textAlign: layer.align || 'center',
+          };
+          if (layer.kind === 'text') {
+            const fontFamily = asText(bible.font_family, 'Arial');
+            return <div key={layer.id} style={{...common, fontFamily: `${fontFamily}, Helvetica, sans-serif`, fontSize: (layer.font_size_px || 48) * scale, fontWeight: layer.font_weight || 700, lineHeight: 1.05, letterSpacing: '-.025em', textShadow: '0 4px 18px rgba(0,0,0,.38)'}}>{layer.text}</div>;
+          }
+          if (layer.kind === 'line' || layer.shape === 'arrow') {
+            return (
+              <svg key={layer.id} viewBox="0 0 300 80" style={{...common, overflow: 'visible'}}>
+                <path d={layer.shape === 'arrow' ? 'M8 40 H270 M228 8 L270 40 L228 72' : 'M8 40 H292'} fill="none" stroke={color} strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" pathLength="1" strokeDasharray="1" strokeDashoffset={1 - draw} />
+              </svg>
+            );
+          }
+          const border = `${Math.max(3, 5 * scale)}px solid ${color}`;
+          const style: React.CSSProperties = layer.shape === 'circle'
+            ? {borderRadius: '50%', border, background: `${color}18`}
+            : layer.shape === 'bracket'
+              ? {borderLeft: border, borderTop: border, borderBottom: border, borderRadius: 12 * scale}
+              : layer.shape === 'underline'
+                ? {height: Math.max(5, 8 * scale), marginTop: 'auto', background: color, borderRadius: 999}
+                : {borderRadius: 18 * scale, border, background: `${color}12`};
+          return <div key={layer.id} style={{...common, ...style}} />;
+        })}
+      </AbsoluteFill>
     </SceneFrame>
   );
 };
@@ -271,6 +372,7 @@ export const MotionSceneView: React.FC<{scene: MotionScene}> = ({scene}) => {
       case 'progress_arc': return ProgressArc;
       case 'highlight_box': return HighlightBox;
       case 'mask_reveal': return TextEffect;
+      case 'kinetic_sequence': return KineticSequence;
       case 'animated_text': case 'callout': return TextEffect;
       case 'shape': return ShapeEffect;
       default: return null;

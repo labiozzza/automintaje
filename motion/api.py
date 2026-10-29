@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
-from .models import ApproveInput, CreateProjectInput, DesignInput, MessageInput, MirrorInput, PreviewInput, RenderInput, ScenePatchInput
+from .models import ApproveInput, CreateProjectInput, DesignInput, GenerateSceneInput, MessageInput, MirrorInput, PreviewInput, RenderInput, SceneArtifactReviewInput, ScenePatchInput
 from .service import MotionError
 
 
@@ -47,6 +47,12 @@ async def motion_capabilities(request: Request):
 async def motion_models(request: Request):
     _require_loopback(request)
     return await asyncio.to_thread(_service(request).models)
+
+
+@router.get("/skills")
+async def motion_skills(request: Request):
+    _require_loopback(request)
+    return await asyncio.to_thread(_service(request).skills)
 
 
 @router.get("/projects")
@@ -122,6 +128,83 @@ async def motion_patch_scene(project_id: str, scene_id: str, payload: ScenePatch
     _require_loopback(request)
     try:
         return await asyncio.to_thread(_service(request).patch_scene, project_id, scene_id, payload)
+    except MotionError as exc:
+        raise _translate(exc) from exc
+
+
+@router.post("/projects/{project_id}/scenes/{scene_id}/generate", status_code=202)
+async def motion_generate_scene(project_id: str, scene_id: str, payload: GenerateSceneInput, request: Request):
+    _require_loopback(request)
+    try:
+        # start_scene_generation schedules a task on the current event loop.
+        return _service(request).start_scene_generation(project_id, scene_id, payload)
+    except MotionError as exc:
+        raise _translate(exc) from exc
+
+
+@router.get("/projects/{project_id}/generated-scenes")
+async def motion_generated_scenes(project_id: str, request: Request):
+    _require_loopback(request)
+    try:
+        return await asyncio.to_thread(_service(request).generated_scene_artifacts, project_id)
+    except MotionError as exc:
+        raise _translate(exc) from exc
+
+
+@router.get("/projects/{project_id}/scenes/{scene_id}/artifacts/{scene_revision}/preview")
+async def motion_generated_scene_preview(project_id: str, scene_id: str, scene_revision: int, request: Request):
+    _require_loopback(request)
+    service = _service(request)
+    try:
+        path = await asyncio.to_thread(service.generated_scene_preview, project_id, scene_id, scene_revision)
+        return service.video_response(path, request, "video/mp4")
+    except MotionError as exc:
+        raise _translate(exc) from exc
+
+
+@router.post("/projects/{project_id}/scenes/{scene_id}/artifacts/review")
+async def motion_review_generated_scene(project_id: str, scene_id: str, payload: SceneArtifactReviewInput, request: Request):
+    _require_loopback(request)
+    try:
+        return await asyncio.to_thread(_service(request).review_generated_scene, project_id, scene_id, payload)
+    except MotionError as exc:
+        raise _translate(exc) from exc
+
+
+@router.post("/projects/{project_id}/scenes/{scene_id}/generate", status_code=202)
+async def motion_generate_scene(project_id: str, scene_id: str, payload: GenerateSceneInput, request: Request):
+    _require_loopback(request)
+    try:
+        return await asyncio.to_thread(_service(request).start_scene_generation, project_id, scene_id, payload)
+    except MotionError as exc:
+        raise _translate(exc) from exc
+
+
+@router.get("/projects/{project_id}/generated-scenes")
+async def motion_generated_scenes(project_id: str, request: Request):
+    _require_loopback(request)
+    try:
+        return await asyncio.to_thread(_service(request).generated_scene_artifacts, project_id)
+    except MotionError as exc:
+        raise _translate(exc) from exc
+
+
+@router.get("/projects/{project_id}/scenes/{scene_id}/artifacts/{scene_revision}/preview")
+async def motion_generated_scene_preview(project_id: str, scene_id: str, scene_revision: int, request: Request):
+    _require_loopback(request)
+    service = _service(request)
+    try:
+        path = await asyncio.to_thread(service.generated_scene_preview, project_id, scene_id, scene_revision)
+        return service.video_response(path, request, "video/mp4")
+    except MotionError as exc:
+        raise _translate(exc) from exc
+
+
+@router.post("/projects/{project_id}/scenes/{scene_id}/artifacts/review")
+async def motion_review_generated_scene(project_id: str, scene_id: str, payload: SceneArtifactReviewInput, request: Request):
+    _require_loopback(request)
+    try:
+        return await asyncio.to_thread(_service(request).review_generated_scene, project_id, scene_id, payload)
     except MotionError as exc:
         raise _translate(exc) from exc
 

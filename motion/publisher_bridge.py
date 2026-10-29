@@ -57,6 +57,7 @@ def build_output_job(project: dict, revision: dict, rendered: dict) -> dict:
             "motion_graphics_plus": True,
             "motion_project_id": str(project.get("id") or ""),
             "motion_revision": int(revision.get("revision") or 1),
+            "motion_generated_scene_ids": list(rendered.get("generated_scene_ids") or []),
             "mirror_horizontal": False,
             "prepare_mirrored": False,
         },

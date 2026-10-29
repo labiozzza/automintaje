@@ -210,12 +210,25 @@
     });
     const list = $('motionSceneList');
     const scenes = plan?.scenes || [];
+    const generatedArtifacts = state.project.generated_scene_artifacts || [];
     if (!scenes.length) {
       list.innerHTML = '<div class="motion-empty">Пока нет сцен. Выберите модель OpenCode и запустите проектирование.</div>';
     } else {
       list.innerHTML = scenes.map((scene) => {
         const frame = nearestFrame(frames, scene.evidence_time_ms ?? scene.start_ms);
         const image = frame ? `<img class="motion-scene-thumb" src="/api/motion/projects/${encodeURIComponent(state.project.id)}/frames/${encodeURIComponent(frame.file.split('/').pop())}" alt="Кадр ${escapeHtml(formatTime(frame.time_ms))}" loading="lazy">` : '';
+        const artifact = generatedArtifacts
+          .filter((item) => item.scene_id === scene.scene_id && Number(item.design_revision) === Number(plan.revision))
+          .sort((a, b) => Number(b.scene_revision) - Number(a.scene_revision))[0];
+        const generated = artifact ? `<div class="motion-generated-scene">
+          <strong>Motion Engineer · ${escapeHtml(artifact.status || 'generated')}</strong>
+          ${artifact.preview_url ? `<video controls preload="metadata" src="${escapeHtml(artifact.preview_url)}" aria-label="Реальный предпросмотр сгенерированной сцены"></video>` : ''}
+          <div class="motion-scene-meta">QA: ${escapeHtml(artifact.qa_status || '—')} · Code SHA: ${escapeHtml(String(artifact.code_sha256 || '').slice(0,12))}</div>
+          ${artifact.review_status === 'proposed' ? `<div class="motion-scene-actions">
+            <button class="btn" data-artifact-action="accept" data-artifact-revision="${Number(artifact.scene_revision)}">Принять TSX-сцену</button>
+            <button class="btn" data-artifact-action="reject" data-artifact-revision="${Number(artifact.scene_revision)}">Отклонить TSX</button>
+          </div>` : `<div class="motion-scene-meta">Сцена: ${escapeHtml(artifact.review_status || '')}</div>`}
+        </div>` : '';
         return `<article class="motion-scene" id="motion-scene-${escapeHtml(scene.scene_id)}" data-status="${escapeHtml(scene.review_status)}">
           <div class="motion-scene-main">
             <div class="motion-scene-time">${escapeHtml(formatTime(scene.start_ms))} — ${escapeHtml(formatTime(scene.end_ms))} · ${escapeHtml(scene.effect_type)}</div>
@@ -229,13 +242,27 @@
             <button class="btn" data-action="reject">Отклонить</button>
             <button class="btn" data-action="disable">Отключить</button>
             <button class="btn" data-action="revise">Изменить</button>
+            <button class="btn motion-engineer-button" data-action="generate-tsx">Motion Engineer: создать оригинальную сцену</button>
           </div>
+          ${generated}
         </article>`;
       }).join('');
       list.querySelectorAll('.motion-scene').forEach((card) => {
         const sceneId = card.id.replace('motion-scene-', '');
         card.querySelectorAll('[data-action]').forEach((button) => {
           button.onclick = () => sceneAction(sceneId, button.dataset.action);
+        });
+        const engineerButton = card.querySelector('[data-action="generate-tsx"]');
+        const activeOperation = !!state.operation && ['queued','running','cancelling'].includes(state.operation.status);
+        if (engineerButton) {
+          engineerButton.disabled = activeOperation || !state.project.approved_revision
+            || Number(state.project.approved_revision) !== Number(plan.revision)
+            || !$("motionModelSelect").value
+            || !!artifact && artifact.review_status === 'accepted';
+          if (artifact && artifact.status !== 'ready_for_review') engineerButton.textContent = 'Motion Engineer: переделать сцену';
+        }
+        card.querySelectorAll('[data-artifact-action]').forEach((button) => {
+          button.onclick = () => reviewGeneratedScene(sceneId, Number(button.dataset.artifactRevision), button.dataset.artifactAction);
         });
       });
     }
@@ -259,6 +286,20 @@
   async function sceneAction(sceneId, action) {
     if (!state.project || !state.storyboard?.revision) return;
     let feedback = '';
+    if (action === 'generate-tsx') {
+      try {
+        const operation = await api(`/projects/${encodeURIComponent(state.project.id)}/scenes/${encodeURIComponent(sceneId)}/generate`, {
+          method:'POST', body:JSON.stringify({
+            model:$('motionModelSelect').value,
+            expected_revision:Number(state.project.approved_revision),
+            request_id:crypto.randomUUID(),
+            comment:$('motionMessageInput').value || '',
+          }),
+        });
+        monitor(operation);
+      } catch (error) { showError(error.message); }
+      return;
+    }
     if (action === 'revise') {
       feedback = window.prompt('Что изменить в этой сцене?') || '';
       if (!feedback.trim()) return;
@@ -271,6 +312,22 @@
       });
       state.project = await api(`/projects/${encodeURIComponent(state.project.id)}`);
       renderProject();
+      showError('');
+    } catch (error) { showError(error.message); }
+  }
+
+  async function reviewGeneratedScene(sceneId, sceneRevision, decision) {
+    if (!state.project || !state.project.approved_revision) return;
+    try {
+      await api(`/projects/${encodeURIComponent(state.project.id)}/scenes/${encodeURIComponent(sceneId)}/artifacts/review`, {
+        method:'POST', body:JSON.stringify({
+          expected_revision:Number(state.project.approved_revision),
+          scene_revision:sceneRevision,
+          decision:decision === 'accept' ? 'accept' : 'reject',
+          request_id:crypto.randomUUID(),
+        }),
+      });
+      await loadProject(state.project.id);
       showError('');
     } catch (error) { showError(error.message); }
   }
